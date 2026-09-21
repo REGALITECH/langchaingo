@@ -27,16 +27,19 @@ const (
 	RoleTool      = "tool"
 )
 
-// ModelCapability defines what a model supports
+// ModelCapability defines what a model supports.
 type ModelCapability struct {
-	Pattern          string // Regex pattern to match model names
-	SupportsSystem   bool   // If true, supports system messages
-	SupportsThinking bool   // If true, supports reasoning/thinking
-	SupportsCaching  bool   // If true, supports prompt caching
-	// Add more capabilities as needed
+	Pattern                   string   // Regex pattern to match model names
+	SupportsSystem            bool     // If true, supports system messages
+	SupportsThinking          bool     // If true, is a reasoning/thinking model
+	SupportsCaching           bool     // If true, supports prompt caching
+	SupportedReasoningEfforts []string // Valid reasoning_effort values for this model variant.
 }
 
-// modelCapabilities defines capabilities for different model patterns
+var reasoningEffortsGPT54Plus = []string{"none", "low", "medium", "high", "xhigh"}
+
+// modelCapabilities defines capabilities for different model patterns.
+// Patterns are evaluated in order; more specific patterns must appear first.
 var modelCapabilities = []ModelCapability{
 	// OpenAI reasoning models (o1, o3 series) - no system message support
 	{
@@ -44,6 +47,13 @@ var modelCapabilities = []ModelCapability{
 		SupportsSystem:   false,                          // O1 models don't support system messages
 		SupportsThinking: true,
 		SupportsCaching:  false,
+	},
+	{
+		Pattern:                   `(?i)^gpt-5\.[4-9]`,
+		SupportsSystem:            true,
+		SupportsThinking:          true,
+		SupportsCaching:           false,
+		SupportedReasoningEfforts: reasoningEffortsGPT54Plus,
 	},
 	// GPT-4 models
 	{
@@ -59,7 +69,15 @@ var modelCapabilities = []ModelCapability{
 		SupportsThinking: false,
 		SupportsCaching:  false,
 	},
-	// Future models can be added here
+}
+
+func supportsReasoningEffort(caps ModelCapability, effort string) bool {
+	for _, supported := range caps.SupportedReasoningEfforts {
+		if effort == supported {
+			return true
+		}
+	}
+	return false
 }
 
 // getModelCapabilities returns the capabilities for a given model
@@ -210,40 +228,38 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		}
 	}
 
-	// Extract reasoning effort for thinking models
-	// Note: OpenAI o1/o3 models have built-in reasoning and don't support reasoning_effort parameter
-	// This is kept for future models that might support it (like GPT-5)
+	// Set reasoning_effort only for models that explicitly support it.
 	var reasoningEffort string
-	// Commented out for now since current o1 models don't support this parameter
-	/*
-		if opts.Metadata != nil {
-			if config, ok := opts.Metadata["thinking_config"].(*llms.ThinkingConfig); ok {
-				// Map thinking mode to reasoning effort
-				switch config.Mode {
-				case llms.ThinkingModeLow:
-					reasoningEffort = "low"
-				case llms.ThinkingModeMedium:
-					reasoningEffort = "medium"
-				case llms.ThinkingModeHigh:
-					reasoningEffort = "high"
-				}
+	if len(modelCaps.SupportedReasoningEfforts) > 0 {
+		if config := llms.GetThinkingConfig(&opts); config != nil {
+			var candidate string
+			switch config.Mode {
+			case llms.ThinkingModeNone:
+				candidate = "none"
+			case llms.ThinkingModeLow:
+				candidate = "low"
+			case llms.ThinkingModeMedium:
+				candidate = "medium"
+			case llms.ThinkingModeHigh:
+				candidate = "high"
+			case llms.ThinkingModeXHigh:
+				candidate = "xhigh"
+			}
+			if supportsReasoningEffort(modelCaps, candidate) {
+				reasoningEffort = candidate
+			}
 
-				// Handle streaming for thinking
-				if config.StreamThinking && opts.StreamingReasoningFunc == nil && opts.StreamingFunc != nil {
-					// Set up default reasoning streaming if requested but not provided
-					// Wrap the single-param streaming func into a reasoning func
-					opts.StreamingReasoningFunc = func(ctx context.Context, reasoningChunk []byte, chunk []byte) error {
-						// For default behavior, we might want to stream both or just the main content
-						// Here we'll just stream the main content chunk
-						if len(chunk) > 0 {
-							return opts.StreamingFunc(ctx, chunk)
-						}
-						return nil
+			if config.StreamThinking && opts.StreamingReasoningFunc == nil && opts.StreamingFunc != nil {
+				streamFn := opts.StreamingFunc
+				opts.StreamingReasoningFunc = func(ctx context.Context, _ []byte, chunk []byte) error {
+					if len(chunk) > 0 {
+						return streamFn(ctx, chunk)
 					}
+					return nil
 				}
 			}
 		}
-	*/
+	}
 
 	// Filter out internal metadata that shouldn't be sent to API
 	apiMetadata := make(map[string]any)

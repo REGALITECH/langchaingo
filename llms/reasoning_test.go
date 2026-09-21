@@ -17,6 +17,7 @@ func TestThinkingModes(t *testing.T) {
 		{"Low", llms.ThinkingModeLow, "low"},
 		{"Medium", llms.ThinkingModeMedium, "medium"},
 		{"High", llms.ThinkingModeHigh, "high"},
+		{"XHigh", llms.ThinkingModeXHigh, "xhigh"},
 		{"Auto", llms.ThinkingModeAuto, "auto"},
 	}
 
