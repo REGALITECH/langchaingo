@@ -103,13 +103,12 @@ func (r ChatRequest) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(&r),
 	}
 
-	// Handle temperature for reasoning models
-	if isReasoningModel(r.Model) {
-		// Reasoning models (GPT-5, o1, o3) only accept temperature=1 (default)
-		// Omit temperature field to let API use its default value
+	// When reasoning is enabled, reasoning models only accept the default
+	// temperature behavior. When it is disabled, the API permits an explicit
+	// temperature, including zero.
+	if isReasoningModel(r.Model) && r.ReasoningEffort != "none" {
 		aux.Temperature = nil
 	} else {
-		// For regular models, always send temperature
 		aux.Temperature = &r.Temperature
 	}
 
@@ -131,17 +130,17 @@ func (r ChatRequest) MarshalJSON() ([]byte, error) {
 }
 
 // isReasoningModel returns true if the model is a reasoning model that has temperature constraints.
-// Reasoning models (GPT-5, o1, o3) only accept temperature=1 and reject other values.
+// Reasoning models only accept temperature=1 and reject other values unless reasoning is disabled.
 func isReasoningModel(model string) bool {
-	// o1 series: o1-preview, o1-mini
-	if strings.HasPrefix(model, "o1-") {
+	// o1 series: o1, o1-mini, o1-preview, …
+	if model == "o1" || strings.HasPrefix(model, "o1-") {
 		return true
 	}
-	// o3 series: o3, o3-mini (note: "o3" without suffix is also valid)
+	// o3 series: o3, o3-mini, …
 	if model == "o3" || strings.HasPrefix(model, "o3-") {
 		return true
 	}
-	// GPT-5 series (when released)
+	// GPT-5 series
 	if strings.HasPrefix(model, "gpt-5") {
 		return true
 	}
@@ -632,6 +631,12 @@ func parseStreamingChatResponse(ctx context.Context, r *http.Response, payload *
 				// Skip non-JSON data values that some providers might send
 				// This could happen if the data field contains non-JSON content
 				continue
+			}
+			var streamError errorMessage
+			if err := json.NewDecoder(bytes.NewReader([]byte(data))).Decode(&streamError); err != nil {
+				streamPayload.Error = fmt.Errorf("error decoding streaming error response: %w", err)
+			} else if streamError.Error.Message != "" {
+				streamPayload.Error = fmt.Errorf("API returned streaming error: %s", streamError.Error.Message)
 			}
 
 			// Non-blocking send with context check

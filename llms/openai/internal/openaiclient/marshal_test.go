@@ -167,6 +167,27 @@ func TestChatRequest_TemperatureMarshalJSON(t *testing.T) {
 	}
 }
 
+func TestChatRequest_TemperatureWhenReasoningDisabled(t *testing.T) {
+	request := ChatRequest{
+		Model:           "gpt-5.4",
+		Temperature:     0,
+		ReasoningEffort: "none",
+	}
+
+	data, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	if got, ok := result["temperature"].(float64); !ok || got != 0 {
+		t.Fatalf("temperature = %#v, want 0", result["temperature"])
+	}
+}
+
 func TestChatRequest_WebSearchOptionsMarshalJSON(t *testing.T) {
 	tests := []struct {
 		name    string
