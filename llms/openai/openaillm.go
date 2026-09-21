@@ -324,6 +324,9 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 	if o.client.ResponseFormat != nil {
 		req.ResponseFormat = o.client.ResponseFormat
 	}
+	if responseFormat := responseFormatFromCallOptions(opts); responseFormat != nil {
+		req.ResponseFormat = responseFormat
+	}
 
 	result, err := o.client.CreateChat(ctx, req)
 	if err != nil {
@@ -383,6 +386,20 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		o.CallbacksHandler.HandleLLMGenerateContentEnd(ctx, response)
 	}
 	return response, nil
+}
+
+func responseFormatFromCallOptions(opts llms.CallOptions) *ResponseFormat {
+	if opts.JSONSchemaResponseFormat == nil {
+		return nil
+	}
+	return &ResponseFormat{
+		Type: "json_schema",
+		JSONSchema: &ResponseFormatJSONSchema{
+			Name:      opts.JSONSchemaResponseFormat.Name,
+			Strict:    opts.JSONSchemaResponseFormat.Strict,
+			RawSchema: opts.JSONSchemaResponseFormat.Schema,
+		},
+	}
 }
 
 // SupportsReasoning implements the ReasoningModel interface.
