@@ -45,6 +45,10 @@ type CallOptions struct {
 
 	// JSONMode is a flag to enable JSON mode.
 	JSONMode bool `json:"json"`
+	// JSONSchemaResponseFormat constrains one response to the supplied JSON
+	// Schema. Providers that do not support it must ignore it rather than
+	// changing their ordinary request behavior.
+	JSONSchemaResponseFormat *JSONSchemaResponseFormat `json:"-"`
 
 	// Tools is a list of tools to use. Each tool can be a specific tool or a function.
 	Tools []Tool `json:"tools,omitempty"`
@@ -73,6 +77,15 @@ type CallOptions struct {
 	// WebSearchOptions configures web search behavior for models that support it.
 	// Currently supported by OpenAI models like gpt-4o-search-preview.
 	WebSearchOptions *WebSearchOptions `json:"web_search_options,omitempty"`
+}
+
+// JSONSchemaResponseFormat is a provider-neutral structured-output request.
+// Schema is deliberately an arbitrary JSON value because JSON Schema supports
+// composition and definitions beyond a fixed Go object model.
+type JSONSchemaResponseFormat struct {
+	Name   string
+	Schema any
+	Strict bool
 }
 
 // Tool is a tool that can be used by the model.
@@ -310,6 +323,15 @@ func WithTools(tools []Tool) CallOption {
 func WithJSONMode() CallOption {
 	return func(o *CallOptions) {
 		o.JSONMode = true
+	}
+}
+
+// WithJSONSchemaResponseFormat requests a JSON Schema-constrained response
+// for this call only. A nil format leaves the provider's response format
+// unchanged.
+func WithJSONSchemaResponseFormat(format *JSONSchemaResponseFormat) CallOption {
+	return func(o *CallOptions) {
+		o.JSONSchemaResponseFormat = format
 	}
 }
 

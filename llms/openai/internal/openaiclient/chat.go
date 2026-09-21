@@ -228,6 +228,21 @@ type ResponseFormatJSONSchema struct {
 	Name   string                            `json:"name"`
 	Strict bool                              `json:"strict"`
 	Schema *ResponseFormatJSONSchemaProperty `json:"schema"`
+	// RawSchema preserves arbitrary JSON Schema features for callers using the
+	// provider-neutral per-call structured-output option.
+	RawSchema any `json:"-"`
+}
+
+func (s ResponseFormatJSONSchema) MarshalJSON() ([]byte, error) {
+	schema := any(s.Schema)
+	if s.RawSchema != nil {
+		schema = s.RawSchema
+	}
+	return json.Marshal(struct {
+		Name   string `json:"name"`
+		Strict bool   `json:"strict"`
+		Schema any    `json:"schema"`
+	}{Name: s.Name, Strict: s.Strict, Schema: schema})
 }
 
 // ResponseFormat is the format of the response.
