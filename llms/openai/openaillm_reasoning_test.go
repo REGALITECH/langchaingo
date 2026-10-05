@@ -84,3 +84,29 @@ func TestGPT54ReasoningEffortRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestExplicitReasoningEffort(t *testing.T) {
+	for _, model := range []string{"gpt-5.4", "openai/gpt-5.4", "future-model"} {
+		for _, effort := range []string{"none", "high", "minimal", "vendor.custom"} {
+			t.Run(model+"/"+effort, func(t *testing.T) {
+				requests := make(chan map[string]any, 1)
+				model, err := New(WithToken("test-key"), WithModel(model), WithHTTPClient(recordingDoer{requests}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = model.Call(context.Background(), "hello",
+					llms.WithThinkingMode(llms.ThinkingModeNone), WithReasoningEffort(effort))
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := <-requests
+				if got := request["reasoning_effort"]; got != effort {
+					t.Fatalf("reasoning_effort = %v, want %s", got, effort)
+				}
+				if _, ok := request["metadata"]; ok {
+					t.Fatal("internal option leaked into API metadata")
+				}
+			})
+		}
+	}
+}

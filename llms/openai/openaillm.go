@@ -261,6 +261,10 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		}
 	}
 
+	if effort, ok := opts.Metadata["openai:reasoning_effort"].(string); ok {
+		reasoningEffort = effort
+	}
+
 	// Filter out internal metadata that shouldn't be sent to API
 	apiMetadata := make(map[string]any)
 	if opts.Metadata != nil {

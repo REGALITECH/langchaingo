@@ -37,3 +37,14 @@ func WithLegacyMaxTokensField() llms.CallOption {
 		opts.Metadata["openai:use_legacy_max_tokens"] = true
 	}
 }
+
+// WithReasoningEffort sends an explicit provider-supported effort without model-name inference.
+// The caller is responsible for selecting a value supported by its endpoint.
+func WithReasoningEffort(effort string) llms.CallOption {
+	return func(opts *llms.CallOptions) {
+		if opts.Metadata == nil {
+			opts.Metadata = make(map[string]interface{})
+		}
+		opts.Metadata["openai:reasoning_effort"] = effort
+	}
+}
