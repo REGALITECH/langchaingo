@@ -656,6 +656,13 @@ func parseStreamingChatResponse(ctx context.Context, r *http.Response, payload *
 				continue
 			}
 
+			var streamError errorMessage
+			if err := json.NewDecoder(bytes.NewReader([]byte(data))).Decode(&streamError); err != nil {
+				streamPayload.Error = fmt.Errorf("error decoding streaming error response: %w", err)
+			} else if streamError.Error.Message != "" {
+				streamPayload.Error = fmt.Errorf("API returned streaming error: %s", streamError.Error.Message)
+			}
+
 			// Non-blocking send with context check
 			select {
 			case <-readerCtx.Done():
