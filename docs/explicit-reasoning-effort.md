@@ -18,19 +18,24 @@ The option uses the client's existing endpoint and API:
 | Anthropic Messages | `output_config.effort` |
 
 The same fields are used with compatible gateway URLs, including Bifrost.
-LangChainGo does not select a different API based on effort, inspect model names,
-normalize the value, or retry without effort. Choose an effort supported by the
+For explicit effort, LangChainGo does not select a different API, gate the
+value on model names, normalize it, or retry without it. Choose an effort supported by the
 actual endpoint and model. Unknown values are forwarded so the endpoint can
 validate them. Other providers and Anthropic's legacy Text Completions API do
 not implement this option.
 
-An absent option or an empty string omits the field, preserving prior behavior.
+An absent option or an empty string preserves prior behavior, including existing
+OpenAI ThinkingMode inference for recognized models. Without ThinkingMode, the
+effort field is omitted.
 Values such as `"none"` are explicit values, not absence. The option is per call;
 reapply it when sending tool results or otherwise continuing a conversation.
 Streaming uses the same request construction as non-streaming generation.
 
-Effort is separate from `WithThinkingMode` and `WithThinkingBudget`. It does not
-enable thinking or calculate a token budget. Anthropic thinking configuration
+Explicit effort overrides OpenAI effort inferred from `WithThinkingMode`,
+regardless of option order or model name. It does not calculate a token budget.
+For OpenAI requests (including gateways), explicit `"none"` preserves temperature,
+including zero; other nonempty efforts omit temperature. Without explicit effort,
+legacy model and ThinkingMode behavior is retained. Anthropic thinking configuration
 can coexist with effort and retains its existing budget conversion behavior.
 
 The HTTP contract tests cover direct and gateway URL prefixes, unknown model

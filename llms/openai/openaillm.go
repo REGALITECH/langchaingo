@@ -27,16 +27,19 @@ const (
 	RoleTool      = "tool"
 )
 
-// ModelCapability defines what a model supports
+// ModelCapability defines what a model supports.
 type ModelCapability struct {
-	Pattern          string // Regex pattern to match model names
-	SupportsSystem   bool   // If true, supports system messages
-	SupportsThinking bool   // If true, supports reasoning/thinking
-	SupportsCaching  bool   // If true, supports prompt caching
-	// Add more capabilities as needed
+	Pattern                   string   // Regex pattern to match model names
+	SupportsSystem            bool     // If true, supports system messages
+	SupportsThinking          bool     // If true, is a reasoning/thinking model
+	SupportsCaching           bool     // If true, supports prompt caching
+	SupportedReasoningEfforts []string // Valid reasoning_effort values for this model variant.
 }
 
-// modelCapabilities defines capabilities for different model patterns
+var reasoningEffortsGPT54Plus = []string{"none", "low", "medium", "high", "xhigh"}
+
+// modelCapabilities defines capabilities for different model patterns.
+// Patterns are evaluated in order; more specific patterns must appear first.
 var modelCapabilities = []ModelCapability{
 	// OpenAI reasoning models (o1, o3 series) - no system message support
 	{
@@ -44,6 +47,13 @@ var modelCapabilities = []ModelCapability{
 		SupportsSystem:   false,                          // O1 models don't support system messages
 		SupportsThinking: true,
 		SupportsCaching:  false,
+	},
+	{
+		Pattern:                   `(?i)^gpt-5\.[4-9]`,
+		SupportsSystem:            true,
+		SupportsThinking:          true,
+		SupportsCaching:           false,
+		SupportedReasoningEfforts: reasoningEffortsGPT54Plus,
 	},
 	// GPT-4 models
 	{
@@ -59,7 +69,15 @@ var modelCapabilities = []ModelCapability{
 		SupportsThinking: false,
 		SupportsCaching:  false,
 	},
-	// Future models can be added here
+}
+
+func supportsReasoningEffort(caps ModelCapability, effort string) bool {
+	for _, supported := range caps.SupportedReasoningEfforts {
+		if effort == supported {
+			return true
+		}
+	}
+	return false
 }
 
 // getModelCapabilities returns the capabilities for a given model
@@ -210,6 +228,45 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		}
 	}
 
+	// Set reasoning_effort only for models that explicitly support it.
+	var reasoningEffort string
+	if len(modelCaps.SupportedReasoningEfforts) > 0 {
+		if config := llms.GetThinkingConfig(&opts); config != nil {
+			var candidate string
+			switch config.Mode {
+			case llms.ThinkingModeNone:
+				candidate = "none"
+			case llms.ThinkingModeLow:
+				candidate = "low"
+			case llms.ThinkingModeMedium:
+				candidate = "medium"
+			case llms.ThinkingModeHigh:
+				candidate = "high"
+			case llms.ThinkingModeXHigh:
+				candidate = "xhigh"
+			}
+			if supportsReasoningEffort(modelCaps, candidate) {
+				reasoningEffort = candidate
+			}
+
+			if config.StreamThinking && opts.StreamingReasoningFunc == nil && opts.StreamingFunc != nil {
+				streamFn := opts.StreamingFunc
+				opts.StreamingReasoningFunc = func(ctx context.Context, _ []byte, chunk []byte) error {
+					if len(chunk) > 0 {
+						return streamFn(ctx, chunk)
+					}
+					return nil
+				}
+			}
+		}
+	}
+
+	// Explicit effort overrides legacy ThinkingMode inference, including for
+	// unknown model names and gateway aliases. Empty retains legacy behavior.
+	if opts.ReasoningEffort != "" {
+		reasoningEffort = opts.ReasoningEffort
+	}
+
 	// Filter out internal metadata that shouldn't be sent to API
 	apiMetadata := make(map[string]any)
 	if opts.Metadata != nil {
@@ -236,7 +293,7 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		N:                      opts.N,
 		FrequencyPenalty:       opts.FrequencyPenalty,
 		PresencePenalty:        opts.PresencePenalty,
-		ReasoningEffort:        opts.ReasoningEffort,
+		ReasoningEffort:        reasoningEffort,
 
 		// Token handling: check metadata flag for legacy behavior
 		// By default use max_completion_tokens (modern field)

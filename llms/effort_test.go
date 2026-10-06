@@ -20,113 +20,126 @@ func TestExplicitReasoningEffortHTTP(t *testing.T) {
 	for _, provider := range []string{"openai", "anthropic"} {
 		for _, gateway := range []bool{false, true} {
 			for _, stream := range []bool{false, true} {
-				for _, effort := range []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max", "future-value"} {
-					name := fmt.Sprintf("%s/gateway=%t/stream=%t/effort=%s", provider, gateway, stream, effort)
-					t.Run(name, func(t *testing.T) {
-						model := "unknown-model-alias"
-						prefix := "/v1"
-						if gateway {
-							prefix = "/" + provider
-							model = provider + "/" + model
-						}
-						requests := 0
-						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							requests++
-							var body map[string]any
-							if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-								t.Error(err)
-								w.WriteHeader(400)
-								return
+				for _, temperature := range []float64{0, 0.7} {
+					for _, effort := range []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max", "future-value"} {
+						name := fmt.Sprintf("%s/gateway=%t/stream=%t/effort=%s/temperature=%g", provider, gateway, stream, effort, temperature)
+						t.Run(name, func(t *testing.T) {
+							model := "unknown-model-alias"
+							prefix := "/v1"
+							if gateway {
+								prefix = "/" + provider
+								model = provider + "/" + model
 							}
-							if body["model"] != model {
-								t.Errorf("model = %v, want %s", body["model"], model)
-							}
-							expectedPath := prefix + "/chat/completions"
-							key := "reasoning_effort"
-							if provider == "anthropic" {
-								expectedPath = prefix + "/messages"
-								key = "output_config"
-							}
-							if r.URL.Path != expectedPath {
-								t.Errorf("path = %s, want %s", r.URL.Path, expectedPath)
-							}
-							value, exists := body[key]
-							if effort == "" {
-								if exists {
-									t.Errorf("unspecified effort emitted %s: %v", key, value)
+							requests := 0
+							server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+								requests++
+								var body map[string]any
+								if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+									t.Error(err)
+									w.WriteHeader(400)
+									return
 								}
-							} else if provider == "anthropic" {
-								config, ok := value.(map[string]any)
-								if !ok || config["effort"] != effort {
-									t.Errorf("output_config = %v, want effort %s", value, effort)
+								if body["model"] != model {
+									t.Errorf("model = %v, want %s", body["model"], model)
 								}
-							} else if value != effort {
-								t.Errorf("reasoning_effort = %v, want %s", value, effort)
-							}
-							if _, exists := body["thinking"]; exists {
-								t.Error("effort unexpectedly enabled budget-based thinking")
-							}
-							if (body["stream"] == true) != stream {
-								t.Errorf("stream = %v", body["stream"])
-							}
-							if requests == 2 {
-								messages := body["messages"].([]any)
-								if len(messages) != 3 {
-									t.Errorf("tool continuation messages = %v", messages)
+								expectedPath := prefix + "/chat/completions"
+								key := "reasoning_effort"
+								if provider == "anthropic" {
+									expectedPath = prefix + "/messages"
+									key = "output_config"
 								}
-								last := messages[len(messages)-1].(map[string]any)
+								if r.URL.Path != expectedPath {
+									t.Errorf("path = %s, want %s", r.URL.Path, expectedPath)
+								}
+								value, exists := body[key]
+								if effort == "" {
+									if exists {
+										t.Errorf("unspecified effort emitted %s: %v", key, value)
+									}
+								} else if provider == "anthropic" {
+									config, ok := value.(map[string]any)
+									if !ok || config["effort"] != effort {
+										t.Errorf("output_config = %v, want effort %s", value, effort)
+									}
+								} else if value != effort {
+									t.Errorf("reasoning_effort = %v, want %s", value, effort)
+								}
 								if provider == "openai" {
-									if last["role"] != "tool" || last["tool_call_id"] != "call_1" {
-										t.Errorf("tool result = %v", last)
-									}
-								} else {
-									content := last["content"].([]any)[0].(map[string]any)
-									if content["type"] != "tool_result" || content["tool_use_id"] != "call_1" {
-										t.Errorf("tool result = %v", last)
+									got, present := body["temperature"]
+									if effort != "" && effort != "none" {
+										if present {
+											t.Errorf("reasoning effort %q must omit temperature, got %v", effort, got)
+										}
+									} else if !present || got != temperature {
+										t.Errorf("temperature = %v (present %t), want %g", got, present, temperature)
 									}
 								}
+								if _, exists := body["thinking"]; exists {
+									t.Error("effort unexpectedly enabled budget-based thinking")
+								}
+								if (body["stream"] == true) != stream {
+									t.Errorf("stream = %v", body["stream"])
+								}
+								if requests == 2 {
+									messages := body["messages"].([]any)
+									if len(messages) != 3 {
+										t.Errorf("tool continuation messages = %v", messages)
+									}
+									last := messages[len(messages)-1].(map[string]any)
+									if provider == "openai" {
+										if last["role"] != "tool" || last["tool_call_id"] != "call_1" {
+											t.Errorf("tool result = %v", last)
+										}
+									} else {
+										content := last["content"].([]any)[0].(map[string]any)
+										if content["type"] != "tool_result" || content["tool_use_id"] != "call_1" {
+											t.Errorf("tool result = %v", last)
+										}
+									}
+								}
+								writeEffortResponse(w, provider, stream, requests == 1)
+							}))
+							defer server.Close()
+							var modelClient llms.Model
+							var err error
+							if provider == "openai" {
+								modelClient, err = openai.New(openai.WithToken("test-key"), openai.WithModel(model), openai.WithBaseURL(server.URL+prefix))
+							} else {
+								modelClient, err = anthropic.New(anthropic.WithToken("test-key"), anthropic.WithModel(model), anthropic.WithBaseURL(server.URL+prefix))
 							}
-							writeEffortResponse(w, provider, stream, requests == 1)
-						}))
-						defer server.Close()
-						var modelClient llms.Model
-						var err error
-						if provider == "openai" {
-							modelClient, err = openai.New(openai.WithToken("test-key"), openai.WithModel(model), openai.WithBaseURL(server.URL+prefix))
-						} else {
-							modelClient, err = anthropic.New(anthropic.WithToken("test-key"), anthropic.WithModel(model), anthropic.WithBaseURL(server.URL+prefix))
-						}
-						require.NoError(t, err)
-						options := []llms.CallOption{llms.WithMaxTokens(4096), llms.WithTools([]llms.Tool{{Type: "function", Function: &llms.FunctionDefinition{Name: "lookup", Parameters: map[string]any{"type": "object"}}}})}
-						if effort != "" {
-							options = append(options, llms.WithReasoningEffort(effort))
-						}
-						var streamed string
-						if stream {
-							options = append(options, llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error { streamed += string(chunk); return nil }))
-						}
-						messages := []llms.MessageContent{llms.TextParts(llms.ChatMessageTypeHuman, "Look it up")}
-						first, err := modelClient.GenerateContent(context.Background(), messages, options...)
-						require.NoError(t, err)
-						require.Len(t, first.Choices, 1)
-						require.Len(t, first.Choices[0].ToolCalls, 1)
-						messages = append(messages,
-							llms.MessageContent{Role: llms.ChatMessageTypeAI, Parts: []llms.ContentPart{first.Choices[0].ToolCalls[0]}},
-							llms.MessageContent{Role: llms.ChatMessageTypeTool, Parts: []llms.ContentPart{llms.ToolCallResponse{ToolCallID: "call_1", Name: "lookup", Content: "found"}}},
-						)
-						streamed = "" // Only inspect the final text, after tool-call streaming.
-						final, err := modelClient.GenerateContent(context.Background(), messages, options...)
-						require.NoError(t, err)
-						require.Equal(t, "done", final.Choices[0].Content)
-						require.Equal(t, 2, requests)
-						if stream {
-							require.Equal(t, "done", streamed)
-						}
-					})
+							require.NoError(t, err)
+							options := []llms.CallOption{llms.WithTemperature(temperature), llms.WithMaxTokens(4096), llms.WithTools([]llms.Tool{{Type: "function", Function: &llms.FunctionDefinition{Name: "lookup", Parameters: map[string]any{"type": "object"}}}})}
+							if effort != "" {
+								options = append(options, llms.WithReasoningEffort(effort))
+							}
+							var streamed string
+							if stream {
+								options = append(options, llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error { streamed += string(chunk); return nil }))
+							}
+							messages := []llms.MessageContent{llms.TextParts(llms.ChatMessageTypeHuman, "Look it up")}
+							first, err := modelClient.GenerateContent(context.Background(), messages, options...)
+							require.NoError(t, err)
+							require.Len(t, first.Choices, 1)
+							require.Len(t, first.Choices[0].ToolCalls, 1)
+							messages = append(messages,
+								llms.MessageContent{Role: llms.ChatMessageTypeAI, Parts: []llms.ContentPart{first.Choices[0].ToolCalls[0]}},
+								llms.MessageContent{Role: llms.ChatMessageTypeTool, Parts: []llms.ContentPart{llms.ToolCallResponse{ToolCallID: "call_1", Name: "lookup", Content: "found"}}},
+							)
+							streamed = "" // Only inspect the final text, after tool-call streaming.
+							final, err := modelClient.GenerateContent(context.Background(), messages, options...)
+							require.NoError(t, err)
+							require.Equal(t, "done", final.Choices[0].Content)
+							require.Equal(t, 2, requests)
+							if stream {
+								require.Equal(t, "done", streamed)
+							}
+						})
+					}
 				}
 			}
 		}
 	}
+
 }
 
 func writeEffortResponse(w http.ResponseWriter, provider string, stream, tool bool) {
