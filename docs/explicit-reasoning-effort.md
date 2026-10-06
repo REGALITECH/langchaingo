@@ -25,19 +25,17 @@ validate them. Other providers and Anthropic's legacy Text Completions API do
 not implement this option.
 
 An absent option or an empty string preserves prior behavior, including
-the upstream `WithThinkingEffort` option and OpenAI `WithThinkingMode` inference for
-recognized models. Without any of these options, the effort field is omitted.
+the upstream `WithThinkingEffort` option. OpenAI `WithThinkingMode` alone does
+not set effort. Without an effort option, the effort field is omitted.
 Values such as `"none"` are explicit values, not absence. The option is per call;
 reapply it when sending tool results or otherwise continuing a conversation.
 Streaming uses the same request construction as non-streaming generation.
 
-Explicit effort overrides `WithThinkingEffort` on both providers and OpenAI
-effort inferred from `WithThinkingMode`,
-regardless of option order or model name. It does not calculate a token budget.
+Explicit effort overrides `WithThinkingEffort` on both providers, regardless of option order or model name. It does not calculate a token budget.
 For OpenAI requests (including gateways), explicit `"none"` preserves temperature,
 including zero; other nonempty efforts omit temperature. Search-preview models
 always omit temperature, as in upstream. Without explicit effort,
-legacy model and ThinkingMode behavior is retained. Anthropic thinking configuration
+existing model-based temperature behavior is retained. Anthropic thinking configuration
 can coexist with effort and retains its existing budget conversion behavior.
 
 The HTTP contract tests cover direct and gateway URL prefixes, unknown model

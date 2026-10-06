@@ -136,7 +136,7 @@ func TestChatRequest_TemperatureMarshalJSON(t *testing.T) {
 		},
 		{
 			name:            "search preview still omits temperature with explicit none",
-			request:         ChatRequest{Model: "gpt-4o-search-preview", Temperature: 0.7, ReasoningEffort: "none"},
+			request:         ChatRequest{Model: "gpt-4o-search-preview", Temperature: 0.7, ReasoningEffort: "none", ExplicitEffort: true},
 			wantTemperature: false,
 		},
 		{
@@ -192,6 +192,7 @@ func TestChatRequest_TemperatureWhenReasoningDisabled(t *testing.T) {
 		Model:           "gpt-5.4",
 		Temperature:     0,
 		ReasoningEffort: "none",
+		ExplicitEffort:  true,
 	}
 
 	data, err := json.Marshal(request)

@@ -32,60 +32,6 @@ func (d recordingDoer) Do(request *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func TestGPT54ReasoningEffortCapabilities(t *testing.T) {
-	caps := getModelCapabilities("gpt-5.4")
-	if !caps.SupportsThinking {
-		t.Fatal("gpt-5.4 does not support thinking")
-	}
-
-	for _, effort := range []string{"none", "low", "medium", "high", "xhigh"} {
-		if !supportsReasoningEffort(caps, effort) {
-			t.Errorf("gpt-5.4 does not support reasoning effort %q", effort)
-		}
-	}
-	if supportsReasoningEffort(caps, "minimal") {
-		t.Error("gpt-5.4 supports unexpected reasoning effort minimal")
-	}
-
-	if supportsReasoningEffort(getModelCapabilities("gpt-5.3"), "high") {
-		t.Error("gpt-5.3 unexpectedly supports reasoning_effort")
-	}
-}
-
-func TestGPT54ReasoningEffortRequest(t *testing.T) {
-	requests := make(chan map[string]any, 2)
-
-	llm, err := New(WithToken("test-key"), WithModel("gpt-5.4"), WithHTTPClient(recordingDoer{requests}))
-	if err != nil {
-		t.Fatalf("new LLM: %v", err)
-	}
-
-	for _, test := range []struct {
-		name            string
-		mode            llms.ThinkingMode
-		wantTemperature bool
-	}{
-		{name: "reasoning enabled", mode: llms.ThinkingModeHigh},
-		{name: "reasoning disabled", mode: llms.ThinkingModeNone, wantTemperature: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := llm.Call(context.Background(), "hello", llms.WithThinkingMode(test.mode), llms.WithTemperature(0))
-			if err != nil {
-				t.Fatalf("call LLM: %v", err)
-			}
-
-			request := <-requests
-			if got := request["reasoning_effort"]; got != string(test.mode) {
-				t.Errorf("reasoning_effort = %#v, want %q", got, test.mode)
-			}
-			_, gotTemperature := request["temperature"]
-			if gotTemperature != test.wantTemperature {
-				t.Errorf("temperature present = %v, want %v", gotTemperature, test.wantTemperature)
-			}
-		})
-	}
-}
-
 func TestExplicitEffortOverridesThinkingMode(t *testing.T) {
 	for _, model := range []string{"gpt-5.4", "gpt-5.3", "o1", "gpt-4o", "gateway/custom-model"} {
 		for _, effort := range []string{"none", "high", "xhigh", "future-value"} {
@@ -132,7 +78,7 @@ func TestExplicitEffortOverridesThinkingMode(t *testing.T) {
 
 func TestUnspecifiedEffortPreservesLegacyThinking(t *testing.T) {
 	for _, model := range []string{"gpt-5.4", "gpt-5.5", "gpt-5.3", "o1", "gpt-4o", "gateway/custom-model"} {
-		for _, mode := range []llms.ThinkingMode{"", llms.ThinkingModeNone, llms.ThinkingModeHigh, llms.ThinkingModeXHigh} {
+		for _, mode := range []llms.ThinkingMode{"", llms.ThinkingModeNone, llms.ThinkingModeHigh} {
 			for _, emptyOption := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/emptyOption=%t", model, mode, emptyOption), func(t *testing.T) {
 					requests := make(chan map[string]any, 1)
@@ -151,25 +97,41 @@ func TestUnspecifiedEffortPreservesLegacyThinking(t *testing.T) {
 						t.Fatal(err)
 					}
 					payload := <-requests
-					wantEffort := ""
-					if model == "gpt-5.4" || model == "gpt-5.5" {
-						wantEffort = string(mode)
+					if effort, exists := payload["reasoning_effort"]; exists {
+						t.Errorf("unexpected effort %v", effort)
 					}
-					gotEffort, exists := payload["reasoning_effort"]
-					if wantEffort == "" {
-						if exists {
-							t.Errorf("unexpected effort %v", gotEffort)
-						}
-					} else if gotEffort != wantEffort {
-						t.Errorf("effort = %v, want %s", gotEffort, wantEffort)
-					}
-					wantTemperature := model == "gpt-4o" || model == "gateway/custom-model" || wantEffort == "none"
+					wantTemperature := model == "gpt-4o" || model == "gateway/custom-model" || model == "o1"
 					gotTemp, exists := payload["temperature"]
 					if exists != wantTemperature || (exists && gotTemp != 0.7) {
 						t.Errorf("temperature = %v (present %t), want presence %t", gotTemp, exists, wantTemperature)
 					}
 				})
 			}
+		}
+	}
+}
+
+func TestEmptyReasoningEffortPreservesUpstreamTemperature(t *testing.T) {
+	for _, model := range []string{"gpt-5.4", "o1", "gpt-4o"} {
+		for _, effort := range []llms.ThinkingEffort{"none", llms.ThinkingEffortHigh} {
+			t.Run(fmt.Sprintf("%s/%s", model, effort), func(t *testing.T) {
+				requests := make(chan map[string]any, 1)
+				client, err := New(WithToken("test-key"), WithModel(model), WithHTTPClient(recordingDoer{requests}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = client.Call(context.Background(), "hello", llms.WithTemperature(0.7),
+					llms.WithThinkingEffort(effort), llms.WithReasoningEffort(""))
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload := <-requests
+				got, present := payload["temperature"]
+				// Preserve main's model-based behavior, including the bare o1 name.
+				if want := model != "gpt-5.4"; present != want || (present && got != 0.7) {
+					t.Errorf("temperature = %v (present %t), want presence %t", got, present, want)
+				}
+			})
 		}
 	}
 }

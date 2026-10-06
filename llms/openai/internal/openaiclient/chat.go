@@ -68,6 +68,9 @@ type ChatRequest struct {
 	// Valid values: "minimal" (GPT-5 only), "low", "medium", "high"
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
+	// ExplicitEffort applies temperature handling for WithReasoningEffort only.
+	ExplicitEffort bool `json:"-"`
+
 	// StreamingFunc is a function to be called for each chunk of a streaming response.
 	// Return an error to stop streaming early.
 	StreamingFunc func(ctx context.Context, chunk []byte) error `json:"-"`
@@ -103,14 +106,23 @@ func (r ChatRequest) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(&r),
 	}
 
-	// When reasoning is enabled, reasoning models only accept the default
-	// temperature behavior. When it is disabled, the API permits an explicit
-	// temperature, including zero. Explicit effort also controls this behavior
-	// for unknown model names and gateway aliases.
-	if isSearchPreviewModel(r.Model) || (r.ReasoningEffort != "none" && (r.ReasoningEffort != "" || isReasoningModel(r.Model))) {
+	// Handle temperature for reasoning and search-preview models
+	if isReasoningModel(r.Model) || isSearchPreviewModel(r.Model) {
+		// These models reject non-default temperature values.
+		// Omit temperature field to let API use its default value
 		aux.Temperature = nil
 	} else {
+		// For regular models, always send temperature
 		aux.Temperature = &r.Temperature
+	}
+
+	// Keep existing sampling behavior unless the new option was supplied.
+	if r.ExplicitEffort && !isSearchPreviewModel(r.Model) {
+		if r.ReasoningEffort == "none" {
+			aux.Temperature = &r.Temperature
+		} else {
+			aux.Temperature = nil
+		}
 	}
 
 	// Ensure only one token field is sent
@@ -137,17 +149,17 @@ func isSearchPreviewModel(model string) bool {
 }
 
 // isReasoningModel returns true if the model is a reasoning model that has temperature constraints.
-// Reasoning models only accept temperature=1 and reject other values unless reasoning is disabled.
+// Reasoning models (GPT-5, o1, o3) only accept temperature=1 and reject other values.
 func isReasoningModel(model string) bool {
-	// o1 series: o1, o1-mini, o1-preview, …
-	if model == "o1" || strings.HasPrefix(model, "o1-") {
+	// o1 series: o1-preview, o1-mini
+	if strings.HasPrefix(model, "o1-") {
 		return true
 	}
-	// o3 series: o3, o3-mini, …
+	// o3 series: o3, o3-mini (note: "o3" without suffix is also valid)
 	if model == "o3" || strings.HasPrefix(model, "o3-") {
 		return true
 	}
-	// GPT-5 series
+	// GPT-5 series (when released)
 	if strings.HasPrefix(model, "gpt-5") {
 		return true
 	}
@@ -638,12 +650,6 @@ func parseStreamingChatResponse(ctx context.Context, r *http.Response, payload *
 				// Skip non-JSON data values that some providers might send
 				// This could happen if the data field contains non-JSON content
 				continue
-			}
-			var streamError errorMessage
-			if err := json.NewDecoder(bytes.NewReader([]byte(data))).Decode(&streamError); err != nil {
-				streamPayload.Error = fmt.Errorf("error decoding streaming error response: %w", err)
-			} else if streamError.Error.Message != "" {
-				streamPayload.Error = fmt.Errorf("API returned streaming error: %s", streamError.Error.Message)
 			}
 
 			// Non-blocking send with context check

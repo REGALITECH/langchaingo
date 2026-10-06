@@ -28,19 +28,16 @@ const (
 	RoleTool      = "tool"
 )
 
-// ModelCapability defines what a model supports.
+// ModelCapability defines what a model supports
 type ModelCapability struct {
-	Pattern                   string   // Regex pattern to match model names
-	SupportsSystem            bool     // If true, supports system messages
-	SupportsThinking          bool     // If true, is a reasoning/thinking model
-	SupportsCaching           bool     // If true, supports prompt caching
-	SupportedReasoningEfforts []string // Valid reasoning_effort values for this model variant.
+	Pattern          string // Regex pattern to match model names
+	SupportsSystem   bool   // If true, supports system messages
+	SupportsThinking bool   // If true, supports reasoning/thinking
+	SupportsCaching  bool   // If true, supports prompt caching
+	// Add more capabilities as needed
 }
 
-var reasoningEffortsGPT54Plus = []string{"none", "low", "medium", "high", "xhigh"}
-
-// modelCapabilities defines capabilities for different model patterns.
-// Patterns are evaluated in order; more specific patterns must appear first.
+// modelCapabilities defines capabilities for different model patterns
 var modelCapabilities = []ModelCapability{
 	// OpenAI reasoning models (o1, o3 series) - no system message support
 	{
@@ -48,13 +45,6 @@ var modelCapabilities = []ModelCapability{
 		SupportsSystem:   false,                          // O1 models don't support system messages
 		SupportsThinking: true,
 		SupportsCaching:  false,
-	},
-	{
-		Pattern:                   `(?i)^gpt-5\.[4-9]`,
-		SupportsSystem:            true,
-		SupportsThinking:          true,
-		SupportsCaching:           false,
-		SupportedReasoningEfforts: reasoningEffortsGPT54Plus,
 	},
 	// GPT-4 models
 	{
@@ -79,15 +69,6 @@ var modelCapabilities = []ModelCapability{
 		SupportsCaching:  false,
 	},
 	// Future models can be added here
-}
-
-func supportsReasoningEffort(caps ModelCapability, effort string) bool {
-	for _, supported := range caps.SupportedReasoningEfforts {
-		if effort == supported {
-			return true
-		}
-	}
-	return false
 }
 
 // clampReasoningEffort maps an effort level to OpenAI's
@@ -250,47 +231,16 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		}
 	}
 
-	// Set reasoning_effort only for models that explicitly support it.
+	// An explicit thinking effort maps to the reasoning_effort
+	// parameter on models that accept it; other models reject the
+	// parameter, so it is omitted. Levels beyond OpenAI's vocabulary
+	// clamp to the highest it accepts (see clampReasoningEffort).
 	var reasoningEffort string
-	if len(modelCaps.SupportedReasoningEfforts) > 0 {
-		if config := llms.GetThinkingConfig(&opts); config != nil {
-			var candidate string
-			switch config.Mode {
-			case llms.ThinkingModeNone:
-				candidate = "none"
-			case llms.ThinkingModeLow:
-				candidate = "low"
-			case llms.ThinkingModeMedium:
-				candidate = "medium"
-			case llms.ThinkingModeHigh:
-				candidate = "high"
-			case llms.ThinkingModeXHigh:
-				candidate = "xhigh"
-			}
-			if supportsReasoningEffort(modelCaps, candidate) {
-				reasoningEffort = candidate
-			}
-
-			if config.StreamThinking && opts.StreamingReasoningFunc == nil && opts.StreamingFunc != nil {
-				streamFn := opts.StreamingFunc
-				opts.StreamingReasoningFunc = func(ctx context.Context, _ []byte, chunk []byte) error {
-					if len(chunk) > 0 {
-						return streamFn(ctx, chunk)
-					}
-					return nil
-				}
-			}
-		}
-	}
-
-	// Preserve the upstream option, giving an explicit thinking effort
-	// precedence over legacy mode inference.
-	if config := llms.GetThinkingConfig(&opts); config != nil && config.Effort != "" && modelCaps.SupportsThinking {
+	if config, ok := opts.Metadata["thinking_config"].(*llms.ThinkingConfig); ok && modelCaps.SupportsThinking {
 		reasoningEffort = clampReasoningEffort(config.Effort)
 	}
 
-	// Explicit effort overrides legacy ThinkingMode inference, including for
-	// unknown model names and gateway aliases. Empty retains legacy behavior.
+	// Explicit effort is forwarded unchanged, including for gateway aliases.
 	if opts.ReasoningEffort != "" {
 		reasoningEffort = opts.ReasoningEffort
 	}
@@ -322,6 +272,7 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		FrequencyPenalty:       opts.FrequencyPenalty,
 		PresencePenalty:        opts.PresencePenalty,
 		ReasoningEffort:        reasoningEffort,
+		ExplicitEffort:         opts.ReasoningEffort != "",
 
 		// Token handling: check metadata flag for legacy behavior
 		// By default use max_completion_tokens (modern field)
