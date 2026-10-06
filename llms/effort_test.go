@@ -33,70 +33,7 @@ func TestExplicitReasoningEffortHTTP(t *testing.T) {
 							requests := 0
 							server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 								requests++
-								var body map[string]any
-								if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-									t.Error(err)
-									w.WriteHeader(400)
-									return
-								}
-								if body["model"] != model {
-									t.Errorf("model = %v, want %s", body["model"], model)
-								}
-								expectedPath := prefix + "/chat/completions"
-								key := "reasoning_effort"
-								if provider == "anthropic" {
-									expectedPath = prefix + "/messages"
-									key = "output_config"
-								}
-								if r.URL.Path != expectedPath {
-									t.Errorf("path = %s, want %s", r.URL.Path, expectedPath)
-								}
-								value, exists := body[key]
-								if effort == "" {
-									if exists {
-										t.Errorf("unspecified effort emitted %s: %v", key, value)
-									}
-								} else if provider == "anthropic" {
-									config, ok := value.(map[string]any)
-									if !ok || config["effort"] != effort {
-										t.Errorf("output_config = %v, want effort %s", value, effort)
-									}
-								} else if value != effort {
-									t.Errorf("reasoning_effort = %v, want %s", value, effort)
-								}
-								if provider == "openai" {
-									got, present := body["temperature"]
-									if effort != "" && effort != "none" {
-										if present {
-											t.Errorf("reasoning effort %q must omit temperature, got %v", effort, got)
-										}
-									} else if !present || got != temperature {
-										t.Errorf("temperature = %v (present %t), want %g", got, present, temperature)
-									}
-								}
-								if _, exists := body["thinking"]; exists {
-									t.Error("effort unexpectedly enabled budget-based thinking")
-								}
-								if (body["stream"] == true) != stream {
-									t.Errorf("stream = %v", body["stream"])
-								}
-								if requests == 2 {
-									messages := body["messages"].([]any)
-									if len(messages) != 3 {
-										t.Errorf("tool continuation messages = %v", messages)
-									}
-									last := messages[len(messages)-1].(map[string]any)
-									if provider == "openai" {
-										if last["role"] != "tool" || last["tool_call_id"] != "call_1" {
-											t.Errorf("tool result = %v", last)
-										}
-									} else {
-										content := last["content"].([]any)[0].(map[string]any)
-										if content["type"] != "tool_result" || content["tool_use_id"] != "call_1" {
-											t.Errorf("tool result = %v", last)
-										}
-									}
-								}
+								checkEffortRequest(t, w, r, provider, model, prefix, effort, temperature, stream, requests)
 								writeEffortResponse(w, provider, stream, requests == 1)
 							}))
 							defer server.Close()
@@ -140,6 +77,74 @@ func TestExplicitReasoningEffortHTTP(t *testing.T) {
 		}
 	}
 
+}
+
+func checkEffortRequest(t *testing.T, w http.ResponseWriter, r *http.Request, provider, model, prefix, effort string, temperature float64, stream bool, requests int) {
+	t.Helper()
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Error(err)
+		w.WriteHeader(400)
+		return
+	}
+	if body["model"] != model {
+		t.Errorf("model = %v, want %s", body["model"], model)
+	}
+	expectedPath := prefix + "/chat/completions"
+	key := "reasoning_effort"
+	if provider == "anthropic" {
+		expectedPath = prefix + "/messages"
+		key = "output_config"
+	}
+	if r.URL.Path != expectedPath {
+		t.Errorf("path = %s, want %s", r.URL.Path, expectedPath)
+	}
+	value, exists := body[key]
+	if effort == "" {
+		if exists {
+			t.Errorf("unspecified effort emitted %s: %v", key, value)
+		}
+	} else if provider == "anthropic" {
+		config, ok := value.(map[string]any)
+		if !ok || config["effort"] != effort {
+			t.Errorf("output_config = %v, want effort %s", value, effort)
+		}
+	} else if value != effort {
+		t.Errorf("reasoning_effort = %v, want %s", value, effort)
+	}
+	if provider == "openai" {
+		got, present := body["temperature"]
+		if effort != "" && effort != "none" {
+			if present {
+				t.Errorf("reasoning effort %q must omit temperature, got %v", effort, got)
+			}
+		} else if !present || got != temperature {
+			t.Errorf("temperature = %v (present %t), want %g", got, present, temperature)
+		}
+	}
+	if _, exists := body["thinking"]; exists {
+		t.Error("effort unexpectedly enabled budget-based thinking")
+	}
+	if (body["stream"] == true) != stream {
+		t.Errorf("stream = %v", body["stream"])
+	}
+	if requests == 2 {
+		messages := body["messages"].([]any)
+		if len(messages) != 3 {
+			t.Errorf("tool continuation messages = %v", messages)
+		}
+		last := messages[len(messages)-1].(map[string]any)
+		if provider == "openai" {
+			if last["role"] != "tool" || last["tool_call_id"] != "call_1" {
+				t.Errorf("tool result = %v", last)
+			}
+		} else {
+			content := last["content"].([]any)[0].(map[string]any)
+			if content["type"] != "tool_result" || content["tool_use_id"] != "call_1" {
+				t.Errorf("tool result = %v", last)
+			}
+		}
+	}
 }
 
 func writeEffortResponse(w http.ResponseWriter, provider string, stream, tool bool) {
@@ -210,5 +215,56 @@ func TestEffortIndependentOfThinkingBudget(t *testing.T) {
 			_, err = client.GenerateContent(context.Background(), []llms.MessageContent{llms.TextParts(llms.ChatMessageTypeHuman, "hello")}, llms.WithMaxTokens(4096), llms.WithThinkingMode(llms.ThinkingModeMedium), llms.WithReasoningEffort(effort))
 			require.NoError(t, err)
 		})
+	}
+}
+
+// Verify that the upstream option survives the merge and that the raw option
+// overrides it without clamping, independently of call-option order.
+func TestReasoningEffortWithUpstreamThinkingEffort(t *testing.T) {
+	for _, provider := range []string{"openai", "anthropic"} {
+		for _, explicit := range []string{"", "max", "none", "future-value"} {
+			for _, explicitFirst := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/explicitFirst=%t", provider, explicit, explicitFirst), func(t *testing.T) {
+					want := "max"
+					if provider == "openai" {
+						want = "xhigh"
+					}
+					if explicit != "" {
+						want = explicit
+					}
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						var body map[string]any
+						if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+							t.Error(err)
+							return
+						}
+						got := body["reasoning_effort"]
+						if provider == "anthropic" {
+							config, _ := body["output_config"].(map[string]any)
+							got = config["effort"]
+						}
+						if got != want {
+							t.Errorf("effort = %v, want %s", got, want)
+						}
+						writeEffortResponse(w, provider, false, false)
+					}))
+					defer server.Close()
+					var model llms.Model
+					var err error
+					if provider == "openai" {
+						model, err = openai.New(openai.WithToken("test"), openai.WithModel("gpt-5.4"), openai.WithBaseURL(server.URL))
+					} else {
+						model, err = anthropic.New(anthropic.WithToken("test"), anthropic.WithModel("claude-sonnet-4-6"), anthropic.WithBaseURL(server.URL))
+					}
+					require.NoError(t, err)
+					options := []llms.CallOption{llms.WithThinkingEffort(llms.ThinkingEffortMax), llms.WithReasoningEffort(explicit)}
+					if explicitFirst {
+						options[0], options[1] = options[1], options[0]
+					}
+					_, err = model.GenerateContent(context.Background(), []llms.MessageContent{llms.TextParts(llms.ChatMessageTypeHuman, "hello")}, options...)
+					require.NoError(t, err)
+				})
+			}
+		}
 	}
 }

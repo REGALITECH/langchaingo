@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -69,6 +70,15 @@ var modelCapabilities = []ModelCapability{
 		SupportsThinking: false,
 		SupportsCaching:  false,
 	},
+	// Later reasoning models (o4-mini, dated o-series snapshots, the
+	// GPT-5 series) accept system messages and reasoning_effort.
+	{
+		Pattern:          `(?i)^(o[0-9]+(-.+)?|gpt-5.*)$`,
+		SupportsSystem:   true,
+		SupportsThinking: true,
+		SupportsCaching:  false,
+	},
+	// Future models can be added here
 }
 
 func supportsReasoningEffort(caps ModelCapability, effort string) bool {
@@ -78,6 +88,18 @@ func supportsReasoningEffort(caps ModelCapability, effort string) bool {
 		}
 	}
 	return false
+}
+
+// clampReasoningEffort maps an effort level to OpenAI's
+// reasoning_effort vocabulary (none, minimal, low, medium, high,
+// xhigh). Only "max" needs mapping: it is an Anthropic level with no
+// OpenAI equivalent, so it clamps to the highest OpenAI accepts. Every
+// other level passes through unchanged.
+func clampReasoningEffort(effort llms.ThinkingEffort) string {
+	if effort == llms.ThinkingEffortMax {
+		return string(llms.ThinkingEffortXHigh)
+	}
+	return string(effort)
 }
 
 // getModelCapabilities returns the capabilities for a given model
@@ -261,6 +283,12 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		}
 	}
 
+	// Preserve the upstream option, giving an explicit thinking effort
+	// precedence over legacy mode inference.
+	if config := llms.GetThinkingConfig(&opts); config != nil && config.Effort != "" && modelCaps.SupportsThinking {
+		reasoningEffort = clampReasoningEffort(config.Effort)
+	}
+
 	// Explicit effort overrides legacy ThinkingMode inference, including for
 	// unknown model names and gateway aliases. Empty retains legacy behavior.
 	if opts.ReasoningEffort != "" {
@@ -323,12 +351,16 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 
 	// since req.Functions is deprecated, we need to use the new Tools API.
 	for _, fn := range opts.Functions {
+		parameters, err := normalizeFunctionParameters(fn.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert function parameters: %w", err)
+		}
 		req.Tools = append(req.Tools, openaiclient.Tool{
 			Type: "function",
 			Function: openaiclient.FunctionDefinition{
 				Name:        fn.Name,
 				Description: fn.Description,
-				Parameters:  fn.Parameters,
+				Parameters:  parameters,
 				Strict:      fn.Strict,
 			},
 		})
@@ -506,16 +538,46 @@ func toolFromTool(t llms.Tool) (openaiclient.Tool, error) {
 	}
 	switch t.Type {
 	case string(openaiclient.ToolTypeFunction):
+		parameters, err := normalizeFunctionParameters(t.Function.Parameters)
+		if err != nil {
+			return openaiclient.Tool{}, fmt.Errorf("invalid function parameters: %w", err)
+		}
 		tool.Function = openaiclient.FunctionDefinition{
 			Name:        t.Function.Name,
 			Description: t.Function.Description,
-			Parameters:  t.Function.Parameters,
+			Parameters:  parameters,
 			Strict:      t.Function.Strict,
 		}
 	default:
 		return openaiclient.Tool{}, fmt.Errorf("tool type %v not supported", t.Type)
 	}
 	return tool, nil
+}
+
+func normalizeFunctionParameters(parameters any) (any, error) {
+	data, err := json.Marshal(parameters)
+	if err != nil {
+		return nil, err
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return parameters, nil
+	}
+	var typ string
+	if err := json.Unmarshal(schema["type"], &typ); err != nil || typ != "object" {
+		return parameters, nil
+	}
+	if _, ok := schema["properties"]; ok {
+		return parameters, nil
+	}
+
+	schema["properties"] = json.RawMessage(`{}`)
+	data, err = json.Marshal(schema)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(data), nil
 }
 
 // toolCallsFromToolCalls converts a slice of llms.ToolCall to a slice of ToolCall.

@@ -107,7 +107,7 @@ func (r ChatRequest) MarshalJSON() ([]byte, error) {
 	// temperature behavior. When it is disabled, the API permits an explicit
 	// temperature, including zero. Explicit effort also controls this behavior
 	// for unknown model names and gateway aliases.
-	if r.ReasoningEffort != "none" && (r.ReasoningEffort != "" || isReasoningModel(r.Model)) {
+	if isSearchPreviewModel(r.Model) || (r.ReasoningEffort != "none" && (r.ReasoningEffort != "" || isReasoningModel(r.Model))) {
 		aux.Temperature = nil
 	} else {
 		aux.Temperature = &r.Temperature
@@ -128,6 +128,12 @@ func (r ChatRequest) MarshalJSON() ([]byte, error) {
 	}
 
 	return json.Marshal(&aux)
+}
+
+// isSearchPreviewModel reports whether model is a search-preview model,
+// including dated snapshots such as gpt-4o-search-preview-2025-03-11.
+func isSearchPreviewModel(model string) bool {
+	return strings.Contains(model, "-search-preview")
 }
 
 // isReasoningModel returns true if the model is a reasoning model that has temperature constraints.
