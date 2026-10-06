@@ -14,6 +14,10 @@ type CallOptions struct {
 	CandidateCount int `json:"candidate_count"`
 	// MaxTokens is the maximum number of tokens to generate.
 	MaxTokens int `json:"max_tokens"`
+	// ReasoningEffort is an explicit provider-supported effort. Empty retains the
+	// existing provider behavior. OpenAI Chat Completions and Anthropic Messages
+	// forward it without model-name inference or ThinkingMode budget conversion.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// Temperature is the temperature for sampling, between 0 and 1.
 	Temperature float64 `json:"temperature"`
 	// StopWords is a list of words to stop on.
@@ -362,4 +366,13 @@ func WithWebSearch(options *WebSearchOptions) CallOption {
 			o.WebSearchOptions = options
 		}
 	}
+}
+
+// WithReasoningEffort sets an explicit effort for OpenAI Chat Completions or
+// Anthropic Messages, including compatible gateways. The caller must select a
+// value supported by the endpoint; values are forwarded unchanged. An empty
+// string retains existing provider behavior. This does not set a thinking
+// budget. For OpenAI, non-none effort omits temperature; none preserves it.
+func WithReasoningEffort(effort string) CallOption {
+	return func(opts *CallOptions) { opts.ReasoningEffort = effort }
 }

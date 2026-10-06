@@ -160,6 +160,10 @@ func generateMessagesContent(ctx context.Context, o *LLM, messages []llms.Messag
 		topP = 0
 	}
 
+	if opts.ReasoningEffort != "" {
+		outputConfig = &anthropicclient.OutputConfig{Effort: opts.ReasoningEffort}
+	}
+
 	result, err := o.client.CreateMessage(ctx, &anthropicclient.MessageRequest{
 		Model:                  opts.Model,
 		Messages:               chatMessages,

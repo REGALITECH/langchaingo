@@ -68,6 +68,9 @@ type ChatRequest struct {
 	// Valid values: "minimal" (GPT-5 only), "low", "medium", "high"
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
+	// ExplicitEffort applies temperature handling for WithReasoningEffort only.
+	ExplicitEffort bool `json:"-"`
+
 	// StreamingFunc is a function to be called for each chunk of a streaming response.
 	// Return an error to stop streaming early.
 	StreamingFunc func(ctx context.Context, chunk []byte) error `json:"-"`
@@ -111,6 +114,19 @@ func (r ChatRequest) MarshalJSON() ([]byte, error) {
 	} else {
 		// For regular models, always send temperature
 		aux.Temperature = &r.Temperature
+	}
+
+	// Models such as GPT-5.4 reject temperature when reasoning effort is not
+	// "none". Apply this rule to explicit effort, including gateway aliases:
+	// nil omits temperature from JSON; a pointer preserves the value, even zero.
+	// Without explicit effort, keep existing sampling behavior. Search-preview
+	// models retain their existing temperature omission regardless of effort.
+	if r.ExplicitEffort && !isSearchPreviewModel(r.Model) {
+		if r.ReasoningEffort == "none" {
+			aux.Temperature = &r.Temperature
+		} else {
+			aux.Temperature = nil
+		}
 	}
 
 	// Ensure only one token field is sent

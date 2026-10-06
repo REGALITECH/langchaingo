@@ -240,6 +240,11 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		reasoningEffort = clampReasoningEffort(config.Effort)
 	}
 
+	// Explicit effort is forwarded unchanged, including for gateway aliases.
+	if opts.ReasoningEffort != "" {
+		reasoningEffort = opts.ReasoningEffort
+	}
+
 	// Filter out internal metadata that shouldn't be sent to API
 	apiMetadata := make(map[string]any)
 	if opts.Metadata != nil {
@@ -267,6 +272,7 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		FrequencyPenalty:       opts.FrequencyPenalty,
 		PresencePenalty:        opts.PresencePenalty,
 		ReasoningEffort:        reasoningEffort,
+		ExplicitEffort:         opts.ReasoningEffort != "",
 
 		// Token handling: check metadata flag for legacy behavior
 		// By default use max_completion_tokens (modern field)
