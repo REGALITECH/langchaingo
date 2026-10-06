@@ -145,6 +145,11 @@ func generateMessagesContent(ctx context.Context, o *LLM, messages []llms.Messag
 
 	betaHeaders, thinking := extractThinkingOptions(o, opts)
 
+	var outputConfig *anthropicclient.OutputConfig
+	if opts.ReasoningEffort != "" {
+		outputConfig = &anthropicclient.OutputConfig{Effort: opts.ReasoningEffort}
+	}
+
 	result, err := o.client.CreateMessage(ctx, &anthropicclient.MessageRequest{
 		Model:                  opts.Model,
 		Messages:               chatMessages,
@@ -155,6 +160,7 @@ func generateMessagesContent(ctx context.Context, o *LLM, messages []llms.Messag
 		TopP:                   opts.TopP,
 		Tools:                  tools,
 		Thinking:               thinking,
+		OutputConfig:           outputConfig,
 		BetaHeaders:            betaHeaders,
 		StreamingFunc:          opts.StreamingFunc,
 		StreamingReasoningFunc: opts.StreamingReasoningFunc,

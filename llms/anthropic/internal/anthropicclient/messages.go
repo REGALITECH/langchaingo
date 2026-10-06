@@ -47,8 +47,15 @@ type messagePayload struct {
 	// Extended thinking parameters (Claude 3.7+)
 	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 
-	StreamingFunc          func(ctx context.Context, chunk []byte) error                      `json:"-"`
+	OutputConfig *OutputConfig `json:"output_config,omitempty"`
+
+	StreamingFunc          func(ctx context.Context, chunk []byte) error                 `json:"-"`
 	StreamingReasoningFunc func(ctx context.Context, reasoningChunk, chunk []byte) error `json:"-"`
+}
+
+// OutputConfig controls response effort independently of the thinking budget.
+type OutputConfig struct {
+	Effort string `json:"effort"`
 }
 
 // ThinkingConfig represents the thinking configuration for Claude 3.7+
