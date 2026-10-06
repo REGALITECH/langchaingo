@@ -116,7 +116,11 @@ func (r ChatRequest) MarshalJSON() ([]byte, error) {
 		aux.Temperature = &r.Temperature
 	}
 
-	// Keep existing sampling behavior unless the new option was supplied.
+	// Models such as GPT-5.4 reject temperature when reasoning effort is not
+	// "none". Apply this rule to explicit effort, including gateway aliases:
+	// nil omits temperature from JSON; a pointer preserves the value, even zero.
+	// Without explicit effort, keep existing sampling behavior. Search-preview
+	// models retain their existing temperature omission regardless of effort.
 	if r.ExplicitEffort && !isSearchPreviewModel(r.Model) {
 		if r.ReasoningEffort == "none" {
 			aux.Temperature = &r.Temperature
