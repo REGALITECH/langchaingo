@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -233,6 +234,10 @@ type ToolCall struct {
 	ID       string       `json:"id,omitempty"`
 	Type     ToolType     `json:"type"`
 	Function ToolFunction `json:"function,omitempty"`
+	// Index identifies the tool call a streamed delta belongs to. Streams send
+	// the id and name only on a call's first delta; later argument fragments
+	// carry just the index. It is nil outside streamed responses.
+	Index *int `json:"index,omitempty"`
 }
 
 type ResponseFormatJSONSchemaProperty struct {
@@ -761,14 +766,17 @@ func updateToolCalls(tools []ToolCall, delta []*ToolCall) ([]byte, []ToolCall) {
 		return []byte{}, tools
 	}
 	for _, t := range delta {
-		// if we have arguments append to the last Tool call
-		if t.Type == `` && t.Function.Arguments != `` {
-			lindex := len(tools) - 1
-			if lindex < 0 {
-				continue
+		if target := streamedToolCallTarget(tools, t); target >= 0 {
+			tools[target].Function.Arguments += t.Function.Arguments
+			if tools[target].Function.Name == "" {
+				tools[target].Function.Name = t.Function.Name
 			}
-
-			tools[lindex].Function.Arguments += t.Function.Arguments
+			continue
+		}
+		// An orphan fragment with neither id nor name cannot start a call.
+		if t.ID == "" && t.Function.Name == "" {
+			slog.Debug("openai: dropped streamed tool-call fragment with no call to continue",
+				"arguments_bytes", len(t.Function.Arguments))
 			continue
 		}
 
@@ -781,28 +789,51 @@ func updateToolCalls(tools []ToolCall, delta []*ToolCall) ([]byte, []ToolCall) {
 	return chunk, tools
 }
 
-// StreamingChatResponseTools is a helper function to append tool calls to the stack.
-func StreamingChatResponseTools(tools []ToolCall, delta []*ToolCall) ([]byte, []ToolCall) {
-	if len(delta) == 0 {
-		return []byte{}, tools
+// streamedToolCallTarget returns the position in tools of the call that delta
+// continues, or -1 when delta starts a new call. A delta starts a new call when
+// it carries an id not seen yet, an index no earlier call used (once calls
+// carry indexes), or a function name that differs from the call's name.
+// Gateways may repeat "type" or the name on every delta, so neither marks a new
+// call on its own. Deltas without an index continue the last call, and an index
+// seen for the first time on a later fragment continues the last call when no
+// stored call has an index.
+func streamedToolCallTarget(tools []ToolCall, delta *ToolCall) int {
+	if delta.ID != "" {
+		for i := len(tools) - 1; i >= 0; i-- {
+			if tools[i].ID == delta.ID {
+				return i
+			}
+		}
+		return -1
 	}
-	for _, t := range delta {
-		// if we have arguments append to the last Tool call
-		if t.Type == `` && t.Function.Arguments != `` {
-			lindex := len(tools) - 1
-			if lindex < 0 {
+	target := len(tools) - 1
+	if delta.Index != nil {
+		target = -1
+		indexed := false
+		for i := len(tools) - 1; i >= 0; i-- {
+			if tools[i].Index == nil {
 				continue
 			}
-
-			tools[lindex].Function.Arguments += t.Function.Arguments
-			continue
+			indexed = true
+			if *tools[i].Index == *delta.Index {
+				target = i
+				break
+			}
 		}
-
-		// Otherwise, this is a new tool call, append that to the stack
-		tools = append(tools, *t)
+		if target < 0 && !indexed {
+			target = len(tools) - 1
+		}
 	}
+	if target < 0 {
+		return -1
+	}
+	if name := delta.Function.Name; name != "" && tools[target].Function.Name != "" && tools[target].Function.Name != name {
+		return -1
+	}
+	return target
+}
 
-	chunk, _ := json.Marshal(delta) // nolint:errchkjson
-
-	return chunk, tools
+// StreamingChatResponseTools is a helper function to append tool calls to the stack.
+func StreamingChatResponseTools(tools []ToolCall, delta []*ToolCall) ([]byte, []ToolCall) {
+	return updateToolCalls(tools, delta)
 }
