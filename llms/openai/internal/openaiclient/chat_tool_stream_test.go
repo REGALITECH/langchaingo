@@ -96,6 +96,31 @@ func TestUpdateToolCallsMergesContinuationsByIndex(t *testing.T) {
 			},
 			want: []ToolCall{{ID: "call_a", Type: "function", Function: ToolFunction{Name: "a", Arguments: "{}"}}},
 		},
+		"first chunk without index then fragments with index": {
+			chunks: []string{
+				`[{"id":"call_a","type":"function","function":{"name":"a","arguments":"{\"q\""}}]`,
+				`[{"index":0,"function":{"arguments":":1}"}}]`,
+			},
+			want: []ToolCall{{ID: "call_a", Type: "function", Function: ToolFunction{Name: "a", Arguments: `{"q":1}`}}},
+		},
+		"name repeated on every fragment without id": {
+			chunks: []string{
+				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":""}}]`,
+				`[{"index":0,"type":"function","function":{"name":"a","arguments":"{\"x\":"}}]`,
+				`[{"index":0,"type":"function","function":{"name":"a","arguments":"1}"}}]`,
+			},
+			want: []ToolCall{{ID: "t1", Type: "function", Function: ToolFunction{Name: "a", Arguments: `{"x":1}`}}},
+		},
+		"different name at a new index starts a new call": {
+			chunks: []string{
+				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":"{}"}}]`,
+				`[{"index":1,"type":"function","function":{"name":"b","arguments":"{}"}}]`,
+			},
+			want: []ToolCall{
+				{ID: "t1", Type: "function", Function: ToolFunction{Name: "a", Arguments: "{}"}},
+				{Type: "function", Function: ToolFunction{Name: "b", Arguments: "{}"}},
+			},
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -110,5 +135,29 @@ func TestUpdateToolCallsMergesContinuationsByIndex(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUpdateToolCallsReturnsRawDeltaForStreamingCallback(t *testing.T) {
+	t.Parallel()
+	chunks := []string{
+		`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":""}}]`,
+		`[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\"x\":1}"}}]`,
+	}
+	var tools []ToolCall
+	for _, c := range chunks {
+		var delta []*ToolCall
+		if err := json.Unmarshal([]byte(c), &delta); err != nil {
+			t.Fatal(err)
+		}
+		want, err := json.Marshal(delta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []byte
+		got, tools = updateToolCalls(tools, delta)
+		if string(got) != string(want) {
+			t.Errorf("callback chunk = %s, want raw delta %s", got, want)
+		}
 	}
 }
