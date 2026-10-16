@@ -505,18 +505,26 @@ type ToolResult struct {
 }
 
 // handleToolMessage converts a tool message, preserving all parts: the
-// results of parallel tool calls belong in a single user message.
+// results of parallel tool calls belong in a single user message. A
+// CachedContent-wrapped result carries its cache control, so a prompt cache
+// breakpoint can sit on the tool_result that usually ends an agent turn.
 func handleToolMessage(msg llms.MessageContent) (anthropicclient.ChatMessage, error) {
 	var contents []anthropicclient.Content
 	for _, part := range msg.Parts {
+		var cacheControl *anthropicclient.CacheControl
+		if cached, ok := part.(llms.CachedContent); ok {
+			cacheControl = cacheControlToClient(cached.CacheControl)
+			part = cached.ContentPart
+		}
 		toolCallResponse, ok := part.(llms.ToolCallResponse)
 		if !ok {
 			return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: %w for tool message: %T", ErrInvalidContentType, part)
 		}
 		contents = append(contents, anthropicclient.ToolResultContent{
-			Type:      "tool_result",
-			ToolUseID: toolCallResponse.ToolCallID,
-			Content:   toolCallResponse.Content,
+			Type:         "tool_result",
+			ToolUseID:    toolCallResponse.ToolCallID,
+			Content:      toolCallResponse.Content,
+			CacheControl: cacheControl,
 		})
 	}
 	if len(contents) == 0 {

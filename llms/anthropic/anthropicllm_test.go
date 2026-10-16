@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -227,6 +228,79 @@ func TestProcessMessagesSystem(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProcessMessagesToolResultCacheControl(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		parts []llms.ContentPart
+		want  []anthropicclient.Content
+	}{
+		{
+			name: "plain results carry no cache control",
+			parts: []llms.ContentPart{
+				llms.ToolCallResponse{ToolCallID: "a", Content: "one"},
+			},
+			want: []anthropicclient.Content{
+				anthropicclient.ToolResultContent{Type: "tool_result", ToolUseID: "a", Content: "one"},
+			},
+		},
+		{
+			name: "cached last result gets a breakpoint",
+			parts: []llms.ContentPart{
+				llms.ToolCallResponse{ToolCallID: "a", Content: "one"},
+				llms.WithCacheControl(llms.ToolCallResponse{ToolCallID: "b", Content: "two"}, EphemeralCache()),
+			},
+			want: []anthropicclient.Content{
+				anthropicclient.ToolResultContent{Type: "tool_result", ToolUseID: "a", Content: "one"},
+				anthropicclient.ToolResultContent{
+					Type: "tool_result", ToolUseID: "b", Content: "two",
+					CacheControl: &anthropicclient.CacheControl{Type: "ephemeral"},
+				},
+			},
+		},
+		{
+			name: "one hour duration maps to 1h ttl",
+			parts: []llms.ContentPart{
+				llms.WithCacheControl(llms.ToolCallResponse{ToolCallID: "a", Content: "one"}, &llms.CacheControl{Duration: time.Hour}),
+			},
+			want: []anthropicclient.Content{
+				anthropicclient.ToolResultContent{
+					Type: "tool_result", ToolUseID: "a", Content: "one",
+					CacheControl: &anthropicclient.CacheControl{Type: "ephemeral", TTL: "1h"},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, _, err := processMessages([]llms.MessageContent{{Role: llms.ChatMessageTypeTool, Parts: tt.parts}})
+			if err != nil {
+				t.Fatalf("processMessages() error = %v", err)
+			}
+			if len(got) != 1 || got[0].Role != RoleUser {
+				t.Fatalf("processMessages() = %#v, want one user message", got)
+			}
+			if !reflect.DeepEqual(got[0].Content, tt.want) {
+				t.Errorf("content = %#v, want %#v", got[0].Content, tt.want)
+			}
+		})
+	}
+
+	t.Run("cached non tool part is rejected", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := processMessages([]llms.MessageContent{{
+			Role:  llms.ChatMessageTypeTool,
+			Parts: []llms.ContentPart{llms.WithCacheControl(llms.TextContent{Text: "x"}, EphemeralCache())},
+		}})
+		if !errors.Is(err, ErrInvalidContentType) {
+			t.Errorf("error = %v, want ErrInvalidContentType", err)
+		}
+	})
 }
 
 func TestToolsToTools(t *testing.T) {
