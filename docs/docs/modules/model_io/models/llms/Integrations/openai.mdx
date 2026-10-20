@@ -23,3 +23,131 @@ model, err := openai.New(openai.WithToken(apiToken))
 ## Example
 
 <CodeBlock language="go">{ExampleOpenAI}</CodeBlock>
+
+## Opaque state through a custom transport
+
+The OpenAI client supports an optional `provider_state` extension for custom
+Chat Completions adapters. This is a LangChainGo adapter contract, not an OpenAI
+Chat Completions API field or a native Responses API client.
+
+`llms.ContentChoice.ProviderState` and `llms.MessageContent.ProviderState` hold
+an `*llms.ProviderState`:
+
+```go
+type ProviderState struct {
+    Provider string          `json:"provider"`
+    Data     json.RawMessage `json:"data"`
+}
+```
+
+`Provider` identifies the adapter's format. `Data` is opaque JSON: native fields,
+large integer values and array order survive without conversion to a common
+schema. State belongs to the whole assistant message, including all its tool
+calls. It is separate from `Content`, `ReasoningContent`, `GenerationInfo` and
+tool arguments, and is not sent to text or reasoning streaming callbacks.
+
+For example, an adapter can use `openai.responses` as its format identifier and
+store the complete Responses `output` array in `Data`. Its buffered response to
+LangChainGo can contain:
+
+```json
+{
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [{
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "now", "arguments": "{}"}
+      }],
+      "provider_state": {
+        "provider": "openai.responses",
+        "data": [
+          {
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [],
+            "encrypted_content": "opaque-encrypted-value"
+          },
+          {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "now",
+            "arguments": "{}",
+            "status": "completed"
+          }
+        ]
+      }
+    },
+    "finish_reason": "tool_calls"
+  }]
+}
+```
+
+For streaming, put the same envelope in `choices[0].delta.provider_state`.
+Every non-null envelope **replaces** the earlier snapshot; it is not appended
+or merged. Deltas that omit the field leave the snapshot intact. Prefer emitting
+one complete snapshot after successfully reading the response. If emitting
+successive snapshots, each must contain all finalized output items so far, in
+their original order. Emit the final snapshot in or before the terminal choice
+delta carrying `finish_reason`, before `[DONE]`. The final response returned by
+`GenerateContent` contains the latest snapshot.
+
+Keep the assistant message in explicit history before appending tool results:
+
+```go
+response, err := model.GenerateContent(ctx, history, llms.WithTools(tools))
+if err != nil {
+    return err
+}
+history = append(history, response.AssistantMessage())
+for _, call := range response.Choices[0].ToolCalls {
+    result, err := executeTool(call)
+    if err != nil {
+        return err
+    }
+    history = append(history, llms.MessageContent{
+        Role: llms.ChatMessageTypeTool,
+        Parts: []llms.ContentPart{llms.ToolCallResponse{
+            ToolCallID: call.ID,
+            Content:    result,
+        }},
+    })
+}
+response, err = model.GenerateContent(ctx, history, llms.WithTools(tools))
+```
+
+`AssistantMessage()` carries the first choice's state, including state-only
+responses. For alternative completions, retain only the selected choice and
+its state. Applications with their own history format must save and restore
+`ProviderState` alongside the message's text and tool calls, preserving assistant
+message boundaries. State can be JSON serialized independently; there is no
+client cache, context value or tool ID encoding. A new client configured with the
+same adapter can replay this history. Legacy text-only history conversions do
+not preserve it automatically.
+
+On the next request, the adapter receives `messages[i].provider_state` with the
+same envelope. For the `openai.responses` convention above, it should:
+
+1. Verify the format identifier, decode `data` as `[]json.RawMessage`, and append
+   those native items to Responses `input` in order. Treat them as the complete
+   representation of that assistant message; do not also reconstruct and append
+   its projected `content` and `tool_calls`, which would duplicate the output.
+2. Append the following tool messages as `function_call_output` items using their
+   original `call_id`. Preserve all earlier assistant snapshots and tool results
+   when continuing through multiple tool rounds.
+3. Consume the extension before sending the native request. An adapter that
+   cannot interpret a supplied format should report an error. Ordinary Chat
+   Completions traffic without state omits the extension.
+
+For stateless Responses requests (`store: false`), retain the entire native
+output, including reasoning items with `encrypted_content`, message fields such
+as `phase`, function call IDs and any unknown fields. When streaming, capture
+finalized items from `response.output_item.done` in `output_index` order or the
+complete final response output; an `output_item.added` reasoning item may still
+contain incomplete encrypted state. See OpenAI's
+[reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) and
+[function calling guide](https://developers.openai.com/api/docs/guides/function-calling).

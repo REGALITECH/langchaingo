@@ -166,7 +166,7 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 			continue
 		}
 
-		msg := &ChatMessage{MultiContent: mc.Parts}
+		msg := &ChatMessage{MultiContent: mc.Parts, ProviderState: mc.ProviderState}
 		switch mc.Role {
 		case llms.ChatMessageTypeSystem:
 			msg.Role = RoleSystem
@@ -346,6 +346,7 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 		choices[i] = &llms.ContentChoice{
 			Content:          c.Message.Content,
 			ReasoningContent: c.Message.ReasoningContent,
+			ProviderState:    c.Message.ProviderState,
 			StopReason:       fmt.Sprint(c.FinishReason),
 			GenerationInfo: map[string]any{
 				"CompletionTokens":  result.Usage.CompletionTokens,

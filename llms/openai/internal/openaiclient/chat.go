@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -307,6 +308,10 @@ type ChatMessage struct { //nolint:musttag
 
 	// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+
+	// ProviderState is a LangChainGo adapter extension, not an OpenAI Chat
+	// Completions API field. A compatible transport must consume it on replay.
+	ProviderState *llms.ProviderState `json:"provider_state,omitempty"`
 }
 
 func (m ChatMessage) MarshalJSON() ([]byte, error) {
@@ -333,7 +338,8 @@ func (m ChatMessage) MarshalJSON() ([]byte, error) {
 			ToolCallID string `json:"tool_call_id,omitempty"`
 
 			// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
-			ReasoningContent string `json:"reasoning_content,omitempty"`
+			ReasoningContent string              `json:"reasoning_content,omitempty"`
+			ProviderState    *llms.ProviderState `json:"provider_state,omitempty"`
 		}(m)
 		return json.Marshal(msg)
 	}
@@ -351,7 +357,8 @@ func (m ChatMessage) MarshalJSON() ([]byte, error) {
 		ToolCallID string `json:"tool_call_id,omitempty"`
 
 		// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
-		ReasoningContent string `json:"reasoning_content,omitempty"`
+		ReasoningContent string              `json:"reasoning_content,omitempty"`
+		ProviderState    *llms.ProviderState `json:"provider_state,omitempty"`
 	}(m)
 	return json.Marshal(msg)
 }
@@ -379,7 +386,8 @@ func (m *ChatMessage) UnmarshalJSON(data []byte) error {
 		ToolCallID string `json:"tool_call_id,omitempty"`
 
 		// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
-		ReasoningContent string `json:"reasoning_content,omitempty"`
+		ReasoningContent string              `json:"reasoning_content,omitempty"`
+		ProviderState    *llms.ProviderState `json:"provider_state,omitempty"`
 	}{}
 	err := json.Unmarshal(data, &msg)
 	if err != nil {
@@ -497,6 +505,9 @@ type StreamedChatResponsePayload struct {
 			ToolCalls []*ToolCall `json:"tool_calls,omitempty"`
 			// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
 			ReasoningContent string `json:"reasoning_content,omitempty"`
+			// Each non-nil value is a complete snapshot, replacing earlier state.
+			// Adapters should emit finalized native items, never JSON fragments.
+			ProviderState *llms.ProviderState `json:"provider_state,omitempty"`
 		} `json:"delta,omitempty"`
 		FinishReason FinishReason `json:"finish_reason,omitempty"`
 	} `json:"choices,omitempty"`
@@ -613,7 +624,9 @@ func (c *Client) createChat(ctx context.Context, payload *ChatRequest) (*ChatCom
 func parseStreamingChatResponse(ctx context.Context, r *http.Response, payload *ChatRequest) (*ChatCompletionResponse,
 	error,
 ) { //nolint:cyclop,lll
-	scanner := bufio.NewScanner(r.Body)
+	// A complete provider state snapshot may exceed Scanner's 64 KiB token
+	// limit. Read whole SSE lines without truncating opaque replay data.
+	reader := bufio.NewReader(r.Body)
 	responseChan := make(chan StreamedChatResponsePayload)
 
 	// Create a context that can be cancelled to stop the goroutine
@@ -622,17 +635,24 @@ func parseStreamingChatResponse(ctx context.Context, r *http.Response, payload *
 
 	go func() {
 		defer close(responseChan)
-		for scanner.Scan() {
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				select {
+				case <-readerCtx.Done():
+					return
+				case responseChan <- StreamedChatResponsePayload{Error: fmt.Errorf("error reading streaming response: %w", err)}:
+					return
+				}
+			}
+			if line == "" && errors.Is(err, io.EOF) {
+				return
+			}
 			// Check if context is cancelled
 			select {
 			case <-readerCtx.Done():
 				return
 			default:
-			}
-
-			line := scanner.Text()
-			if line == "" {
-				continue
 			}
 
 			// Skip SSE comment lines (any line starting with ':')
@@ -654,7 +674,7 @@ func parseStreamingChatResponse(ctx context.Context, r *http.Response, payload *
 				return
 			}
 			var streamPayload StreamedChatResponsePayload
-			err := json.NewDecoder(bytes.NewReader([]byte(data))).Decode(&streamPayload)
+			err = json.NewDecoder(bytes.NewReader([]byte(data))).Decode(&streamPayload)
 			if err != nil {
 				// Skip non-JSON data values that some providers might send
 				// This could happen if the data field contains non-JSON content
@@ -674,14 +694,6 @@ func parseStreamingChatResponse(ctx context.Context, r *http.Response, payload *
 				return
 			case responseChan <- streamPayload:
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			select {
-			case <-readerCtx.Done():
-				return
-			case responseChan <- StreamedChatResponsePayload{Error: fmt.Errorf("error reading streaming response: %w", err)}:
-			}
-			return
 		}
 	}()
 	// Combine response
@@ -725,6 +737,9 @@ func combineStreamingChatResponse(
 		response.Choices[0].Message.Content += choice.Delta.Content
 		response.Choices[0].FinishReason = choice.FinishReason
 		response.Choices[0].Message.ReasoningContent += choice.Delta.ReasoningContent
+		if choice.Delta.ProviderState != nil {
+			response.Choices[0].Message.ProviderState = choice.Delta.ProviderState
+		}
 
 		if choice.Delta.FunctionCall != nil {
 			chunk = updateFunctionCall(response.Choices[0].Message, choice.Delta.FunctionCall)

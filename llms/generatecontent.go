@@ -2,6 +2,7 @@ package llms
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 )
@@ -14,6 +15,25 @@ import (
 type MessageContent struct {
 	Role  ChatMessageType
 	Parts []ContentPart
+
+	// ProviderState carries opaque state returned with this message. Preserve it
+	// when replaying the message through the same provider or adapter.
+	ProviderState *ProviderState `json:",omitempty"`
+}
+
+// ProviderState is provider-specific state for replaying a complete assistant
+// message. It is separate from visible text, reasoning summaries and tool
+// arguments, and may contain an ordered sequence of native output items.
+// Callers should retain it unchanged with the message, including when persisting
+// history or recreating a client. Only the originating provider or adapter may
+// interpret Data; this is not request metadata or a user-editable prompt.
+type ProviderState struct {
+	// Provider identifies the format and the adapter that understands it,
+	// for example "openai.responses".
+	Provider string `json:"provider"`
+	// Data retains native fields and array order without decoding into a
+	// lossy common schema. It must be valid JSON.
+	Data json.RawMessage `json:"data"`
 }
 
 // TextPart creates TextContent from a given string.
@@ -171,6 +191,12 @@ type ContentChoice struct {
 	// This field is only used with the deepseek-reasoner model and represents the reasoning contents of the assistant message before the final answer.
 	ReasoningContent string
 
+	// ProviderState is opaque replay state for this choice. For alternative
+	// completions, keep only the chosen completion's state. Providers that split
+	// one response into multiple choices must attach the complete message state
+	// to the first choice.
+	ProviderState *ProviderState `json:",omitempty"`
+
 	// Parts, when populated by a provider, carries the typed content
 	// parts of this choice (TextContent, ToolCall, ThinkingContent,
 	// RedactedThinkingContent, ...). Concatenating the Parts of a
@@ -193,12 +219,16 @@ type ContentChoice struct {
 // merged into one message here.
 //
 // When no choice carries parts, the message is assembled from the
-// first choice's text and tool calls. A nil response, or a nil first
-// choice, yields an empty AI message.
+// first choice's text and tool calls. ProviderState is taken from the first
+// choice, even when it contains no text or tool calls. A nil response, or a
+// nil first choice with no parts, yields an empty AI message.
 func (cr *ContentResponse) AssistantMessage() MessageContent {
 	msg := MessageContent{Role: ChatMessageTypeAI}
 	if cr == nil {
 		return msg
+	}
+	if len(cr.Choices) > 0 && cr.Choices[0] != nil {
+		msg.ProviderState = cr.Choices[0].ProviderState
 	}
 	for _, c := range cr.Choices {
 		if c != nil {
