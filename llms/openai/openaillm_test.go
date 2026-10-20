@@ -154,18 +154,18 @@ func TestGenerateContentFunctionParametersAndReplay(t *testing.T) {
 	want := map[string]any{"type": "object", "properties": map[string]any{}}
 	require.Equal(t, want, req.Tools[0].Function.Parameters)
 
-	// OpenAI choices have no interface-valued Parts; their state and tool calls
-	// can also survive an application's persisted history, not just pointer reuse.
-	saved, err := json.Marshal(resp.Choices[0])
-	require.NoError(t, err)
-	var restored llms.ContentChoice
-	require.NoError(t, json.Unmarshal(saved, &restored))
-	history = append(history, (&llms.ContentResponse{Choices: []*llms.ContentChoice{&restored}}).AssistantMessage())
+	history = append(history, resp.AssistantMessage())
 	for _, call := range toolCalls {
 		history = append(history, llms.MessageContent{Role: llms.ChatMessageTypeTool,
 			Parts: []llms.ContentPart{llms.ToolCallResponse{ToolCallID: call.ID, Content: "12:00"}}})
 	}
-	// A new client must recover state entirely from explicitly retained history.
+	// Persist the actual request history through MessageContent's custom JSON
+	// methods, then reuse it with a new client after tool execution.
+	saved, err := json.Marshal(history)
+	require.NoError(t, err)
+	var restored []llms.MessageContent
+	require.NoError(t, json.Unmarshal(saved, &restored))
+	history = restored
 	llm, err = New(WithToken("test-token"), WithBaseURL(server.URL), WithModel("gpt-4o"))
 	require.NoError(t, err)
 	var text, reasoning string

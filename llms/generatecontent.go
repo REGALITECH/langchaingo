@@ -18,7 +18,7 @@ type MessageContent struct {
 
 	// ProviderState carries opaque state returned with this message. Preserve it
 	// when replaying the message through the same provider or adapter.
-	ProviderState *ProviderState `json:",omitempty"`
+	ProviderState *ProviderState `json:"provider_state,omitempty"`
 }
 
 // ProviderState is provider-specific state for replaying a complete assistant
