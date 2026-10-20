@@ -1,6 +1,7 @@
 package llms
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -37,6 +38,7 @@ func TestTextParts(t *testing.T) {
 
 func TestAssistantMessage(t *testing.T) {
 	t.Parallel()
+	state := &ProviderState{Provider: "openai.responses", Data: json.RawMessage(`[{"type":"reasoning","encrypted_content":"opaque"}]`)}
 	tests := []struct {
 		name string
 		resp *ContentResponse
@@ -45,11 +47,11 @@ func TestAssistantMessage(t *testing.T) {
 		{
 			name: "concatenates parts across block-per-choice response",
 			resp: &ContentResponse{Choices: []*ContentChoice{
-				{Parts: []ContentPart{ThinkingContent{Thinking: "hm", Signature: "sig"}}},
+				{Parts: []ContentPart{ThinkingContent{Thinking: "hm", Signature: "sig"}}, ProviderState: state},
 				{Content: "hi", Parts: []ContentPart{TextContent{Text: "hi"}}},
 				{Parts: []ContentPart{ToolCall{ID: "t1", FunctionCall: &FunctionCall{Name: "f", Arguments: "{}"}}}},
 			}},
-			want: MessageContent{Role: ChatMessageTypeAI, Parts: []ContentPart{
+			want: MessageContent{Role: ChatMessageTypeAI, ProviderState: state, Parts: []ContentPart{
 				ThinkingContent{Thinking: "hm", Signature: "sig"},
 				TextContent{Text: "hi"},
 				ToolCall{ID: "t1", FunctionCall: &FunctionCall{Name: "f", Arguments: "{}"}},
@@ -59,15 +61,21 @@ func TestAssistantMessage(t *testing.T) {
 			name: "falls back to first choice content and tool calls",
 			resp: &ContentResponse{Choices: []*ContentChoice{
 				{
-					Content:   "answer",
-					ToolCalls: []ToolCall{{ID: "t2", FunctionCall: &FunctionCall{Name: "g", Arguments: "{}"}}},
+					Content:       "answer",
+					ToolCalls:     []ToolCall{{ID: "t2", FunctionCall: &FunctionCall{Name: "g", Arguments: "{}"}}},
+					ProviderState: state,
 				},
-				{Content: "alternative"},
+				{Content: "alternative", ProviderState: &ProviderState{Provider: "other", Data: json.RawMessage(`{}`)}},
 			}},
-			want: MessageContent{Role: ChatMessageTypeAI, Parts: []ContentPart{
+			want: MessageContent{Role: ChatMessageTypeAI, ProviderState: state, Parts: []ContentPart{
 				TextContent{Text: "answer"},
 				ToolCall{ID: "t2", FunctionCall: &FunctionCall{Name: "g", Arguments: "{}"}},
 			}},
+		},
+		{
+			name: "state without visible content or tools",
+			resp: &ContentResponse{Choices: []*ContentChoice{{ProviderState: state}}},
+			want: MessageContent{Role: ChatMessageTypeAI, ProviderState: state},
 		},
 		{
 			name: "empty response",

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,6 +36,26 @@ func TestCache_hashKeyForCache(t *testing.T) {
 			v1:          []llms.MessageContent{{}},
 			v1opt:       []llms.CallOption{llms.WithCandidateCount(1)},
 			v2:          []llms.MessageContent{{}},
+			shouldMatch: false,
+		},
+		{
+			name: "same text with different provider states",
+			v1: []llms.MessageContent{{
+				Role:  llms.ChatMessageTypeAI,
+				Parts: []llms.ContentPart{llms.TextPart("same")},
+				ProviderState: &llms.ProviderState{
+					Provider: "openai.responses",
+					Data:     json.RawMessage(`[{"encrypted_content":"A"}]`),
+				},
+			}},
+			v2: []llms.MessageContent{{
+				Role:  llms.ChatMessageTypeAI,
+				Parts: []llms.ContentPart{llms.TextPart("same")},
+				ProviderState: &llms.ProviderState{
+					Provider: "openai.responses",
+					Data:     json.RawMessage(`[{"encrypted_content":"B"}]`),
+				},
+			}},
 			shouldMatch: false,
 		},
 	}

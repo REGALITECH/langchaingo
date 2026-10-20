@@ -264,7 +264,8 @@ func TestUnmarshalJSONMessageContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			var mc MessageContent
+			// Decoding history without state must clear a previous message's state.
+			mc := MessageContent{ProviderState: &ProviderState{Provider: "stale", Data: json.RawMessage(`{}`)}}
 			err := mc.UnmarshalJSON([]byte(tt.input))
 			if (err != nil) != tt.wantErr {
 				t.Errorf("UnmarshalJSON() error = %v, wantErr %v", err, tt.wantErr)
@@ -348,6 +349,10 @@ func TestMarshalJSONMessageContent(t *testing.T) {
 // Test roundtripping for both JSON and YAML representations.
 func TestRoundtripping(t *testing.T) { // nolint:funlen // We make an exception given the number of test cases.
 	t.Parallel()
+	state := &ProviderState{
+		Provider: "openai.responses",
+		Data:     json.RawMessage(`[{"encrypted_content":"opaque","id":"rs_1","summary":[],"type":"reasoning"}]`),
+	}
 	tests := []struct {
 		name         string
 		in           MessageContent
@@ -357,13 +362,23 @@ func TestRoundtripping(t *testing.T) { // nolint:funlen // We make an exception 
 		{
 			name: "single text part",
 			in: MessageContent{
-				Role: "user",
+				Role:          "assistant",
+				ProviderState: state,
 				Parts: []ContentPart{
 					TextContent{Text: "Hello, world!"},
 				},
 			},
-			assertedJSON: `{"role":"user","text":"Hello, world!"}`,
-			assertedYAML: "role: user\ntext: Hello, world!\n",
+			assertedJSON: `{"role":"assistant","text":"Hello, world!","provider_state":{"provider":"openai.responses","data":[{"encrypted_content":"opaque","id":"rs_1","summary":[],"type":"reasoning"}]}}`,
+			assertedYAML: `provider_state:
+  data:
+  - encrypted_content: opaque
+    id: rs_1
+    summary: []
+    type: reasoning
+  provider: openai.responses
+role: assistant
+text: Hello, world!
+`,
 		},
 		{
 			name: "multiple parts",
@@ -395,11 +410,16 @@ role: user
 		{
 			name: "tool use",
 			in: MessageContent{
-				Role: "assistant",
+				Role:          "assistant",
+				ProviderState: state,
 				Parts: []ContentPart{
 					ToolCall{Type: "function", ID: "t01", FunctionCall: &FunctionCall{Name: "get_current_weather", Arguments: `{ "location": "New York" }`}},
 				},
 			},
+		},
+		{
+			name: "provider state without content parts",
+			in:   MessageContent{Role: "assistant", ProviderState: state},
 		},
 		{
 			name: "multiple tool uses",
