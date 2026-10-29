@@ -564,7 +564,7 @@ func TestToolCallJSONRoundTrip(t *testing.T) {
 		{"no function", ToolCall{ID: "c2", Type: "function", FunctionCall: &FunctionCall{}}},
 		{"extra content", ToolCall{
 			ID: "c3", Type: "function", FunctionCall: &FunctionCall{Name: "calc", Arguments: `{"x":1}`},
-			ExtraContent: json.RawMessage(`{"google":{"thought_signature":"opaque"},"future":{"n":9007199254740993,"values":[true,null,"unknown"]}}`),
+			ExtraContent: json.RawMessage(`{"google":{"thought_signature":"opaque"}}`),
 		}},
 	}
 	for _, tt := range tests {

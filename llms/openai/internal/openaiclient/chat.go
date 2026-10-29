@@ -238,7 +238,9 @@ type ToolCall struct {
 	// Index identifies the tool call a streamed delta belongs to. Streams send
 	// the id and name only on a call's first delta; later argument fragments
 	// carry just the index. It is nil outside streamed responses.
-	Index        *int            `json:"index,omitempty"`
+	Index *int `json:"index,omitempty"`
+	// ExtraContent is a provider extension, not an OpenAI API field. Gemini
+	// sends thought signatures here and requires them back; it is kept opaque.
 	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
@@ -787,7 +789,8 @@ func updateToolCalls(tools []ToolCall, delta []*ToolCall) ([]byte, []ToolCall) {
 			if tools[target].Function.Name == "" {
 				tools[target].Function.Name = t.Function.Name
 			}
-			if len(t.ExtraContent) > 0 {
+			// A later null must not erase a value received earlier.
+			if len(t.ExtraContent) > 0 && string(t.ExtraContent) != "null" {
 				tools[target].ExtraContent = t.ExtraContent
 			}
 			continue

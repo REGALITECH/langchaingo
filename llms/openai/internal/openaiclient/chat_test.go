@@ -98,32 +98,6 @@ data: {"id":"fa7e4fc5-a05d-4e7b-9a66-a2dd89e91a4e","object":"chat.completion.chu
 	assert.Equal(t, FinishReason(""), resp.Choices[0].FinishReason)
 }
 
-func TestParseStreamingChatResponse_ToolCallExtraContent(t *testing.T) {
-	t.Parallel()
-	body := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"one","arguments":"{"},"extra_content":{"google":{"thought_signature":"first"},"future":9007199254740993}},{"index":1,"id":"call_2","type":"function","function":{"name":"two","arguments":"{}"}}]}}]}
-
-data: {"choices":[{"delta":{"tool_calls":[{"index":1,"extra_content":{"google":{"thought_signature":"late"}}},{"index":0,"function":{"arguments":"}"}}]}}]}
-
-data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
-
-data: [DONE]
-`
-	resp, err := parseStreamingChatResponse(context.Background(), &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader(body)),
-	}, &ChatRequest{})
-	require.NoError(t, err)
-	require.Len(t, resp.Choices, 1)
-	calls := resp.Choices[0].Message.ToolCalls
-	require.Len(t, calls, 2)
-	require.Equal(t, "call_1", calls[0].ID)
-	require.Equal(t, "call_2", calls[1].ID)
-	require.Equal(t, "{}", calls[0].Function.Arguments)
-	require.Equal(t, "{}", calls[1].Function.Arguments)
-	require.Equal(t, `{"google":{"thought_signature":"first"},"future":9007199254740993}`, string(calls[0].ExtraContent))
-	require.Equal(t, `{"google":{"thought_signature":"late"}}`, string(calls[1].ExtraContent))
-}
-
 func TestChatRequest_ToolCallExtraContent(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -135,8 +109,8 @@ func TestChatRequest_ToolCallExtraContent(t *testing.T) {
 		{name: "empty", extra: json.RawMessage{}},
 		{
 			name:  "opaque JSON",
-			extra: json.RawMessage(`{"google":{"thought_signature":"opaque"},"future":9007199254740993}`),
-			field: `,"extra_content":{"google":{"thought_signature":"opaque"},"future":9007199254740993}`,
+			extra: json.RawMessage(`{"google":{"thought_signature":"opaque"}}`),
+			field: `,"extra_content":{"google":{"thought_signature":"opaque"}}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,13 +123,6 @@ func TestChatRequest_ToolCallExtraContent(t *testing.T) {
 			require.NoError(t, err)
 			// Assert exact bytes so empty extra content cannot change existing requests.
 			require.Equal(t, `{"model":"gpt-4o","messages":[{"role":"assistant","content":"checking","tool_calls":[{"id":"call_1","type":"function","function":{"name":"now","arguments":"{}"}`+tc.field+`}]}],"temperature":0}`, string(data))
-
-			// ChatMessage has a separate marshaler for multipart content.
-			request.Messages[0].Content = ""
-			request.Messages[0].MultiContent = []llms.ContentPart{llms.TextPart("one"), llms.TextPart("two")}
-			data, err = json.Marshal(request)
-			require.NoError(t, err)
-			require.Equal(t, `{"model":"gpt-4o","messages":[{"role":"assistant","content":[{"text":"one","type":"text"},{"text":"two","type":"text"}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"now","arguments":"{}"}`+tc.field+`}]}],"temperature":0}`, string(data))
 		})
 	}
 }

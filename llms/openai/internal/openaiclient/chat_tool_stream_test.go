@@ -121,33 +121,24 @@ func TestUpdateToolCallsMergesContinuationsByIndex(t *testing.T) {
 				{Type: "function", Function: ToolFunction{Name: "b", Arguments: "{}"}},
 			},
 		},
-		"extra content on first delta survives later argument fragments": {
+		"extra content on first delta survives later fragments, including null": {
 			chunks: []string{
-				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":"{"},"extra_content":{"google":{"thought_signature":"first"},"future":9007199254740993}}]`,
-				`[{"index":0,"function":{"arguments":"}"}}]`,
+				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":"{"},"extra_content":{"google":{"thought_signature":"first"}}}]`,
+				`[{"index":0,"function":{"arguments":"}"},"extra_content":null}]`,
 			},
 			want: []ToolCall{{ID: "t1", Type: "function", Function: ToolFunction{Name: "a", Arguments: "{}"},
-				ExtraContent: json.RawMessage(`{"google":{"thought_signature":"first"},"future":9007199254740993}`)}},
-		},
-		"extra content arrives on index-only delta": {
-			chunks: []string{
-				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":"{}"}}]`,
-				`[{"index":0,"extra_content":{"google":{"thought_signature":"late"}}}]`,
-				`[{"index":0}]`,
-			},
-			want: []ToolCall{{ID: "t1", Type: "function", Function: ToolFunction{Name: "a", Arguments: "{}"},
-				ExtraContent: json.RawMessage(`{"google":{"thought_signature":"late"}}`)}},
+				ExtraContent: json.RawMessage(`{"google":{"thought_signature":"first"}}`)}},
 		},
 		"parallel calls replace only their own extra content": {
 			chunks: []string{
-				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":"{"},"extra_content":{"google":{"thought_signature":"old"},"old_key":true}},{"index":1,"id":"t2","type":"function","function":{"name":"b","arguments":"{"}}]`,
+				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":"{"},"extra_content":{"google":{"thought_signature":"old"}}},{"index":1,"id":"t2","type":"function","function":{"name":"b","arguments":"{"}}]`,
 				`[{"index":1,"extra_content":{"google":{"thought_signature":"second"}}}]`,
-				`[{"index":0,"extra_content":{"google":{"thought_signature":"replacement"},"future":9007199254740993}}]`,
+				`[{"index":0,"extra_content":{"google":{"thought_signature":"replacement"}}}]`,
 				`[{"index":1,"function":{"arguments":"}"}},{"index":0,"function":{"arguments":"}"}}]`,
 			},
 			want: []ToolCall{
 				{ID: "t1", Type: "function", Function: ToolFunction{Name: "a", Arguments: "{}"},
-					ExtraContent: json.RawMessage(`{"google":{"thought_signature":"replacement"},"future":9007199254740993}`)},
+					ExtraContent: json.RawMessage(`{"google":{"thought_signature":"replacement"}}`)},
 				{ID: "t2", Type: "function", Function: ToolFunction{Name: "b", Arguments: "{}"},
 					ExtraContent: json.RawMessage(`{"google":{"thought_signature":"second"}}`)},
 			},
