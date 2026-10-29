@@ -121,6 +121,37 @@ func TestUpdateToolCallsMergesContinuationsByIndex(t *testing.T) {
 				{Type: "function", Function: ToolFunction{Name: "b", Arguments: "{}"}},
 			},
 		},
+		"extra content on first delta survives later argument fragments": {
+			chunks: []string{
+				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":"{"},"extra_content":{"google":{"thought_signature":"first"},"future":9007199254740993}}]`,
+				`[{"index":0,"function":{"arguments":"}"}}]`,
+			},
+			want: []ToolCall{{ID: "t1", Type: "function", Function: ToolFunction{Name: "a", Arguments: "{}"},
+				ExtraContent: json.RawMessage(`{"google":{"thought_signature":"first"},"future":9007199254740993}`)}},
+		},
+		"extra content arrives on index-only delta": {
+			chunks: []string{
+				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":"{}"}}]`,
+				`[{"index":0,"extra_content":{"google":{"thought_signature":"late"}}}]`,
+				`[{"index":0}]`,
+			},
+			want: []ToolCall{{ID: "t1", Type: "function", Function: ToolFunction{Name: "a", Arguments: "{}"},
+				ExtraContent: json.RawMessage(`{"google":{"thought_signature":"late"}}`)}},
+		},
+		"parallel calls replace only their own extra content": {
+			chunks: []string{
+				`[{"index":0,"id":"t1","type":"function","function":{"name":"a","arguments":"{"},"extra_content":{"google":{"thought_signature":"old"},"old_key":true}},{"index":1,"id":"t2","type":"function","function":{"name":"b","arguments":"{"}}]`,
+				`[{"index":1,"extra_content":{"google":{"thought_signature":"second"}}}]`,
+				`[{"index":0,"extra_content":{"google":{"thought_signature":"replacement"},"future":9007199254740993}}]`,
+				`[{"index":1,"function":{"arguments":"}"}},{"index":0,"function":{"arguments":"}"}}]`,
+			},
+			want: []ToolCall{
+				{ID: "t1", Type: "function", Function: ToolFunction{Name: "a", Arguments: "{}"},
+					ExtraContent: json.RawMessage(`{"google":{"thought_signature":"replacement"},"future":9007199254740993}`)},
+				{ID: "t2", Type: "function", Function: ToolFunction{Name: "b", Arguments: "{}"},
+					ExtraContent: json.RawMessage(`{"google":{"thought_signature":"second"}}`)},
+			},
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -132,6 +163,9 @@ func TestUpdateToolCallsMergesContinuationsByIndex(t *testing.T) {
 			for i := range tc.want {
 				if got[i].ID != tc.want[i].ID || got[i].Type != tc.want[i].Type || got[i].Function != tc.want[i].Function {
 					t.Errorf("tool call %d = %+v, want %+v", i, got[i], tc.want[i])
+				}
+				if string(got[i].ExtraContent) != string(tc.want[i].ExtraContent) {
+					t.Errorf("tool call %d extra content = %s, want %s", i, got[i].ExtraContent, tc.want[i].ExtraContent)
 				}
 			}
 		})

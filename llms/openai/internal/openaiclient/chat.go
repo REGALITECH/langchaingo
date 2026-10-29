@@ -238,7 +238,8 @@ type ToolCall struct {
 	// Index identifies the tool call a streamed delta belongs to. Streams send
 	// the id and name only on a call's first delta; later argument fragments
 	// carry just the index. It is nil outside streamed responses.
-	Index *int `json:"index,omitempty"`
+	Index        *int            `json:"index,omitempty"`
+	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
 type ResponseFormatJSONSchemaProperty struct {
@@ -785,6 +786,9 @@ func updateToolCalls(tools []ToolCall, delta []*ToolCall) ([]byte, []ToolCall) {
 			tools[target].Function.Arguments += t.Function.Arguments
 			if tools[target].Function.Name == "" {
 				tools[target].Function.Name = t.Function.Name
+			}
+			if len(t.ExtraContent) > 0 {
+				tools[target].ExtraContent = t.ExtraContent
 			}
 			continue
 		}

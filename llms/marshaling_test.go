@@ -562,6 +562,10 @@ func TestToolCallJSONRoundTrip(t *testing.T) {
 	}{
 		{"function", ToolCall{ID: "c1", Type: "function", FunctionCall: &FunctionCall{Name: "calc", Arguments: `{"x":1}`}}},
 		{"no function", ToolCall{ID: "c2", Type: "function", FunctionCall: &FunctionCall{}}},
+		{"extra content", ToolCall{
+			ID: "c3", Type: "function", FunctionCall: &FunctionCall{Name: "calc", Arguments: `{"x":1}`},
+			ExtraContent: json.RawMessage(`{"google":{"thought_signature":"opaque"},"future":{"n":9007199254740993,"values":[true,null,"unknown"]}}`),
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -570,12 +574,26 @@ func TestToolCallJSONRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := ToolCall{ID: "stale", FunctionCall: &FunctionCall{Name: "stale"}}
+			got := ToolCall{ID: "stale", FunctionCall: &FunctionCall{Name: "stale"}, ExtraContent: json.RawMessage(`{"stale":true}`)}
 			if err := json.Unmarshal(data, &got); err != nil {
 				t.Fatal(err)
 			}
 			if diff := cmp.Diff(tt.in, got); diff != "" {
 				t.Errorf("round trip of %s mismatch (-want +got):\n%s", data, diff)
+			}
+
+			// MessageContent decodes ContentPart through a separate custom path.
+			message := MessageContent{Role: ChatMessageTypeAI, Parts: []ContentPart{TextPart("checking"), tt.in}}
+			data, err = json.Marshal(message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored MessageContent
+			if err := json.Unmarshal(data, &restored); err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(message, restored); diff != "" {
+				t.Errorf("message round trip of %s mismatch (-want +got):\n%s", data, diff)
 			}
 		})
 	}

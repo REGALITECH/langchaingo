@@ -122,6 +122,8 @@ type ToolCall struct {
 	Type string `json:"type"`
 	// FunctionCall is the function call to be executed.
 	FunctionCall *FunctionCall `json:"function,omitempty"`
+	// ExtraContent is opaque provider-specific JSON, preserved without interpretation.
+	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
 func (ToolCall) isPart() {}
