@@ -89,7 +89,8 @@ func TestGenerateContentFunctionParametersAndReplay(t *testing.T) {
 		{"type":"function_call","id":"fc_2","call_id":"call_2","name":"now","arguments":"{}","status":"completed"}
 	]`)}
 	toolCalls := []llms.ToolCall{
-		{ID: "call_1", Type: "function", FunctionCall: &llms.FunctionCall{Name: "now", Arguments: "{}"}},
+		{ID: "call_1", Type: "function", FunctionCall: &llms.FunctionCall{Name: "now", Arguments: "{}"},
+			ExtraContent: json.RawMessage(`{"google":{"thought_signature":"opaque-signature"},"future":{"n":9007199254740993,"values":[true,null,"unknown"]}}`)},
 		{ID: "call_2", Type: "function", FunctionCall: &llms.FunctionCall{Name: "now", Arguments: "{}"}},
 	}
 	message := ChatMessage{Role: "assistant", Content: "checking", ReasoningContent: "summary",

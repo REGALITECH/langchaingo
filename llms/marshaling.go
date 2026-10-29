@@ -49,9 +49,10 @@ func (mc *MessageContent) UnmarshalJSON(data []byte) error {
 			} `json:"binary,omitempty"`
 			ID       string `json:"id"`
 			ToolCall struct {
-				ID           string        `json:"id"`
-				Type         string        `json:"type"`
-				FunctionCall *FunctionCall `json:"function"`
+				ID           string          `json:"id"`
+				Type         string          `json:"type"`
+				FunctionCall *FunctionCall   `json:"function"`
+				ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 			} `json:"tool_call"`
 			ToolResponse struct {
 				ToolCallID string `json:"tool_call_id"`
@@ -86,6 +87,7 @@ func (mc *MessageContent) UnmarshalJSON(data []byte) error {
 				ID:           part.ToolCall.ID,
 				Type:         part.ToolCall.Type,
 				FunctionCall: part.ToolCall.FunctionCall,
+				ExtraContent: part.ToolCall.ExtraContent,
 			})
 		case "tool_response":
 			mc.Parts = append(mc.Parts, ToolCallResponse{
@@ -224,6 +226,9 @@ func (tc ToolCall) MarshalJSON() ([]byte, error) {
 			"function": json.RawMessage(fc),
 		},
 	}
+	if len(tc.ExtraContent) > 0 {
+		m.ToolCall["extra_content"] = tc.ExtraContent
+	}
 	return json.Marshal(m)
 }
 
@@ -231,9 +236,10 @@ func (tc *ToolCall) UnmarshalJSON(data []byte) error {
 	var m struct {
 		Type     *string `json:"type"`
 		ToolCall *struct {
-			ID           *string       `json:"id"`
-			Type         *string       `json:"type"`
-			FunctionCall *FunctionCall `json:"function"`
+			ID           *string         `json:"id"`
+			Type         *string         `json:"type"`
+			FunctionCall *FunctionCall   `json:"function"`
+			ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 		} `json:"tool_call"`
 	}
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -258,6 +264,7 @@ func (tc *ToolCall) UnmarshalJSON(data []byte) error {
 	tc.ID = *m.ToolCall.ID
 	tc.Type = *m.ToolCall.Type
 	tc.FunctionCall = &fc
+	tc.ExtraContent = m.ToolCall.ExtraContent
 	return nil
 }
 

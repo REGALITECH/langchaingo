@@ -380,6 +380,7 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 					Name:      tool.Function.Name,
 					Arguments: tool.Function.Arguments,
 				},
+				ExtraContent: tool.ExtraContent,
 			})
 		}
 		// populate legacy single-function call field for backwards compatibility
@@ -550,6 +551,7 @@ func toolCallFromToolCall(tc llms.ToolCall) openaiclient.ToolCall {
 			Name:      tc.FunctionCall.Name,
 			Arguments: tc.FunctionCall.Arguments,
 		},
+		ExtraContent: tc.ExtraContent,
 	}
 }
 

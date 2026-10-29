@@ -98,6 +98,35 @@ data: {"id":"fa7e4fc5-a05d-4e7b-9a66-a2dd89e91a4e","object":"chat.completion.chu
 	assert.Equal(t, FinishReason(""), resp.Choices[0].FinishReason)
 }
 
+func TestChatRequest_ToolCallExtraContent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		extra json.RawMessage
+		field string
+	}{
+		{name: "nil"},
+		{name: "empty", extra: json.RawMessage{}},
+		{
+			name:  "opaque JSON",
+			extra: json.RawMessage(`{"google":{"thought_signature":"opaque"}}`),
+			field: `,"extra_content":{"google":{"thought_signature":"opaque"}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			request := ChatRequest{Model: "gpt-4o", Messages: []*ChatMessage{{
+				Role: "assistant", Content: "checking",
+				ToolCalls: []ToolCall{{ID: "call_1", Type: "function", Function: ToolFunction{Name: "now", Arguments: "{}"}, ExtraContent: tc.extra}},
+			}}}
+			data, err := json.Marshal(request)
+			require.NoError(t, err)
+			// Assert exact bytes so empty extra content cannot change existing requests.
+			require.Equal(t, `{"model":"gpt-4o","messages":[{"role":"assistant","content":"checking","tool_calls":[{"id":"call_1","type":"function","function":{"name":"now","arguments":"{}"}`+tc.field+`}]}],"temperature":0}`, string(data))
+		})
+	}
+}
+
 func TestChatMessage_MarshalUnmarshal(t *testing.T) {
 	t.Parallel()
 	msg := ChatMessage{
